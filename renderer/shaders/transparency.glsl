@@ -483,6 +483,42 @@ vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
                       t.rect.xy + t.rect.zw);
 }
 
+// The colour the dome's diffuse light keeps at p (normal n) under the
+// translucent balls and boxes of frame.tintCasters (Frame::translucentSkyShadows;
+// the AO sees no translucent mesh). Each hides the cosine-weighted share
+// of the sky an ellipsoid of its bounds covers (a sphere's form factor
+// cos * r^2 / d^2, r^2 its projected area / pi) and lets its colour
+// through there: both of its sides, absorbing over the mean chord of its
+// box (4 V / S).
+// ponytail: world-space bounds (a rotated box is its bounding box), the
+// horizon doesn't clip a caster partly under it.
+vec3 TranslucentSkyTint(vec3 p, vec3 n)
+{
+    vec3 tint = vec3(1.0);
+    if (!Feature(kFeatureTranslucentShadows)) {
+        return tint;
+    }
+    for (uint i = 0u; i < frame.tintCasterInfo.x; ++i) {
+        vec4 c = frame.tintCasters[2u * i];
+        vec3 e = max(frame.tintCasters[2u * i + 1u].xyz, vec3(1e-6)), d = c.xyz - p;
+        if (dot(d / e, d / e) < 0.999) {
+            continue;  // inside its bounds' ellipsoid: on or in the caster itself
+        }
+        float l2 = dot(d, d);
+        vec3 u = d * inversesqrt(l2);
+        float hidden = min(max(dot(n, u), 0.0) * e.x * e.y * e.z * length(u / e) / l2, 1.0);
+        uint material = draws[uint(c.w)].material;
+        if (hidden < 1e-3 || material == kNoMaterial) {
+            continue;  // no material: lets everything through
+        }
+        Material m = materials[material];
+        float chord = 4.0 * e.x * e.y * e.z / (e.x * e.y + e.y * e.z + e.z * e.x);
+        vec3 through = clamp(ShadowTransmission(m, vec2(0.5), chord) * ShadowTransmission(m, vec2(0.5), 0.0), 0.0, 1.0);
+        tint *= 1.0 - hidden * (1.0 - through);
+    }
+    return tint;
+}
+
 // The outputs of the passes after the opaque one. OIT: premultiplied
 // colour and coverage times a weight falling with the distance (relative
 // to the nearest translucent mesh's, to the power frame.translucency.w)

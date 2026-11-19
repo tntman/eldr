@@ -324,8 +324,8 @@ public:
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.
         bool ssgi = false;
-        uint32_t ssgiSteps = 8;        // per direction and side (1..32)
-        float ssgiRadius = 1.0f;       // world units
+        uint32_t ssgiSteps = 16;       // per direction and side (1..32)
+        float ssgiRadius = 0.0f;       // world units; 0: across the whole screen (gtao.frag)
         uint32_t ssgiResolution = 2;   // traced at 1 / this (1, 2), denoised and upsampled
         // Emissive surfaces as lights: small meshes emitting at least the
         // threshold also light the scene as sphere lights (with shadows);
@@ -353,6 +353,12 @@ public:
         // shadow maps' resolution (1..4).
         bool translucentShadows = true;
         uint32_t translucentShadowDivisor = 2;
+        // With translucentShadows: the dome's diffuse light under the
+        // translucent balls and boxes nearest the camera (8, one instance
+        // each) takes their colour, by the share of the sky each hides
+        // (the AO doesn't see them). Not with the final gather (it traces
+        // them). Off: the sky passes untinted.
+        bool translucentSkyShadows = true;
         // Subsurface scattering (needs depthPrepass): the diffuse light of
         // subsurface materials blurred over this many taps per direction
         // (1..64), and the sun shining through their thin parts.
@@ -575,7 +581,7 @@ public:
         // ssgiBitmaskThickness of ssgiRadius thick, light from the sectors nothing nearer hides,
         // weighted by how much the surface it comes from faces the pixel.
         bool ssgiBitmask = false;
-        float ssgiBitmaskThickness = 0.25f;  // the bitmask's object thickness, in ssgiRadius
+        float ssgiBitmaskThickness = 0.25f;  // the bitmask's object thickness, in ssgiRadius (0: in a tenth of the distance to the camera)
         // Back-face hits in SSR and SSGI (Blender 5.2's Backface option): a
         // ray that meets the visible surface from behind (it went behind an
         // object) takes its radiance times screenBackfaceScale (0: none,

@@ -2290,6 +2290,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.translucentVariant.clear();
     _gpu.translucentFlags.clear();
     _gpu.translucentCenters.clear();
+    _gpu.translucentExtents.clear();
     _gpu.tintCasters.clear();
     _gpu.tintCasterVariant.clear();
     _gpu.slotGeometry.resize(slots);
@@ -2395,6 +2396,11 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 r2 += 0.25f * (m._worldMax[k] - m._worldMin[k]) * (m._worldMax[k] - m._worldMin[k]);
             }
             _gpu.translucentCenters.push_back(std::sqrt(r2));
+            for (int k = 0; k < 3; ++k) {
+                _gpu.translucentExtents.push_back(0.5f * (m._worldMax[k] - m._worldMin[k]));
+            }
+            _gpu.translucentExtents.push_back(
+                drawable && m._shape != 0 && m._instanceCount == 1 && !m.holdout && (m.rays & Mesh::kShadowRays) ? 1.0f : 0.0f);
         } else if (mat && mat->thinWalled && mat->subsurface > 0) {
             kind[slot] = Gpu::kTints;  // a leaf: its shadow lets its colour through
             _gpu.tintCasters.push_back(uint32_t(slot));

@@ -20,6 +20,9 @@
 namespace vkr {
 
 // std140 mirror of FrameData in shaders/frame.glsl.
+// Translucent balls and boxes that tint the dome's light under them (Frame::translucentSkyShadows).
+constexpr uint32_t kSkyTintCasters = 8;
+
 struct FrameData {
     float viewProj[16];
     float invViewProj[16];
@@ -73,6 +76,8 @@ struct FrameData {
                                // w 1: screen-space refraction marches the depth buffer (Frame::refractionMarch)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
     uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
+    float tintCasters[2 * kSkyTintCasters][4];  // Frame::translucentSkyShadows: centre, slot; half extents
+    uint32_t tintCasterInfo[4];                  // x: how many
 };
 
 namespace {
@@ -4023,6 +4028,29 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (translucentShadows || volumeShadows || localVolumeShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
+    // The translucent balls and boxes nearest the camera that tint the
+    // dome's light under them (transparency.glsl TranslucentSkyTint).
+    fd.tintCasterInfo[0] = 0;
+    if (translucentShadows && frame.translucentShadows && frame.translucentSkyShadows) {
+        std::vector<std::pair<float, size_t>> nearest;
+        for (size_t i = 0; i < gpu.translucent.size(); ++i) {
+            const float *c = &gpu.translucentCenters[i * 4];
+            if (gpu.translucentExtents[i * 4 + 3] > 0.0f) {
+                const Vec3 d{c[0] - frame.cameraPos[0], c[1] - frame.cameraPos[1], c[2] - frame.cameraPos[2]};
+                nearest.push_back({Dot(d, d), i});
+            }
+        }
+        std::sort(nearest.begin(), nearest.end());
+        for (size_t k = 0; k < std::min<size_t>(nearest.size(), kSkyTintCasters); ++k) {
+            const size_t i = nearest[k].second;
+            float *c = fd.tintCasters[2 * k], *e = fd.tintCasters[2 * k + 1];
+            std::copy_n(&gpu.translucentCenters[i * 4], 3, c);
+            c[3] = float(gpu.translucent[i]);
+            std::copy_n(&gpu.translucentExtents[i * 4], 3, e);
+            e[3] = 0.0f;
+            ++fd.tintCasterInfo[0];
+        }
+    }
     if (frame.holdouts && gpu.holdouts) {
         fd.features[0] |= kFeatureHoldouts;
     }
@@ -4604,10 +4632,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                          frame.sampleDimensions ? dims[kDimSsgi] : float(sample + 1),
                          aoSlices, std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
                          _historyValid,
-                         std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
-                                  frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
+                         // Diffuse Limit 0: no bounced light, the visibility only.
+                         frame.diffuseLimit == 0 ? 0.0f
+                                                 : std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
+                                                            frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
                          _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
-                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * frame.ssgiRadius : 0.0f,
+                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * (frame.ssgiRadius > 0.0f ? frame.ssgiRadius : -1.0f) : 0.0f,
                          frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : -1.0f,
                          frame.ssgiTileOrder ? sample : 0, frame.sampleDimensions ? dims[kDimSsgiJitter] : -1.0f);
         pass("ssgi");

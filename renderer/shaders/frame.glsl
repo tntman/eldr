@@ -67,6 +67,9 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
                          // w 1: RefractedBackground marches the depth buffer
     vec4 scene;          // x: the scene's frame, y: in seconds (program.glsl's kOpTime)
     uvec4 tiles;         // tile-based adaptive sampling (tiles.glsl): x the stamp a tile needs, 0 off; y, z tiles
+    vec4 tintCasters[16];  // translucent balls and boxes tinting the dome (transparency.glsl TranslucentSkyTint):
+                           // per caster its bounds' centre and slot (DrawInfo), then half extents
+    uvec4 tintCasterInfo;  // x: how many (up to 8)
 } frame;
 
 // Unit direction from p towards the viewer: the camera's position, or for

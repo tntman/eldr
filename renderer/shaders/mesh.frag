@@ -1428,6 +1428,14 @@ void main()
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
     vec3 domeSpecular = specular, domeDiffuse = Lavg;  // the dome's alone (light splits)
+    // No dome: where reflections miss, the bounce light stands in instead
+    // of black: the GI probes' around the mirror direction, else SSGI's
+    // at the pixel (without either there is no ambient light to show).
+    // Glossy surfaces only (SSR's range): on rough ones it brightened the
+    // Cornell box past Karma (mald 0.025 to 0.052).
+    if (frame.envRadiance.w <= 0.0 && perceptual < 0.6) {
+        specular = GiDiffuse(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), v, SsgiDiffuse());
+    }
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
     // Final gather: traced, so occluded already; neither AO nor SSGI on it.
@@ -1436,8 +1444,10 @@ void main()
     if (finalGather) {
         Lavg = gathered;
     }
+    // Under glass the sky light takes its colour (the gather traces it).
     const vec3 indirectDiffuse = finalGather ? Lavg * occlusion
-                                        : Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0) : diffuseColor) +
+                                        : Lavg * TranslucentSkyTint(inWorldPos, n) *
+                                                  MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0) : diffuseColor) +
                                               SsgiDiffuse() * occlusion;
     int mirrorIndex = OnMirror(instances[inSlot].draw, inWorldPos);
     bool mirror = mirrorIndex >= 0;
