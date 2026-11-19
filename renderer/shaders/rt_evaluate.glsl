@@ -73,7 +73,7 @@ Surface Evaluate(vec3 dir, float cone)
     }
     vec3 w0 = (model * vec4(p[0], 1.0)).xyz, w1 = (model * vec4(p[1], 1.0)).xyz, w2 = (model * vec4(p[2], 1.0)).xyz;
     inUv = uv[0] * b.x + uv[1] * b.y + uv[2] * b.z;
-    inColor = d.vertexColors != 0u ? color : d.color.rgb;
+    inColor = DISPLAY_COLOR(d, instances[instance].index, color);
     programPosition = p[0] * b.x + p[1] * b.y + p[2] * b.z;
     programNormal = objectN;
     programModel = model;

@@ -430,6 +430,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 const auto &ts = *HdVkRenderSettingsTokens;
                 resync = resync || (typed != current && (token == ts.subdivision || token == ts.maxRefineLevel ||
                                                          token == HdVkRenderSettingsTokens->screenDicing ||
+                                                         token == HdVkRenderSettingsTokens->displacementDicing ||
                                                          token == HdVkRenderSettingsTokens->textureCompression));
             }
         }
@@ -585,6 +586,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         };
         frame.rtReflectionBounces = rayLimit(t2.rtReflectionBounces, "karma:global:reflectlimit");
         frame.rtRefractionBounces = rayLimit(t2.rtRefractionBounces, "karma:global:refractlimit");
+        // GI's diffuse bounces: eldr:diffuseLimit (-1: not set), else
+        // karma:object:diffuselimit, karma:global:diffuselimit, else 1 (Karma's).
+        double diffuse = number(setting(t2.diffuseLimit));
+        for (const char *karma : {"karma:object:diffuselimit", "karma:global:diffuselimit"}) {
+            diffuse = diffuse < 0.0 ? number(setting(TfToken(karma))) : diffuse;
+        }
+        frame.diffuseLimit = diffuse < 0.0 ? 1u : uint32_t(std::min(diffuse, 1e6));
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&

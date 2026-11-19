@@ -1,9 +1,5 @@
 <div align="center">
 
-<p align="center">
-  <img src="docs/images/hero.jpg" alt="Eldr: a Vulkan Hydra render delegate for OpenUSD and Houdini Solaris" width="100%">
-</p>
-
 <h1>Eldr</h1>
 
 <p><b>A GPU raster renderer for OpenUSD and MaterialX. Final VFX frames to EXR in seconds, with Karma as the look it aims for.</b></p>
@@ -69,76 +65,279 @@ The display name is **Eldr** everywhere; the plugin id is `HdVkRendererPlugin`, 
 <!-- GALLERY -->
 ## Gallery
 
-The CC0 Cornell box and one variant per feature, rendered with husk at 512 x 512: Eldr default, Eldr final and Karma side by side. [docs/gallery.md](docs/gallery.md) has each scene's purpose and how it is rendered.
+Every scene renders four ways with husk: ● **Eldr default**, every effect that works without ray tracing (screen-space GI, reflections and refraction, planar mirrors, ambient occlusion, subsurface, soft shadow maps, denoising, 256 film samples: `tests/scenes/cornell/eldr_default.usda`); ◆ **Eldr final**, ray traced (reflections, refraction, shadows, GI, final gather, caustics, denoising, 256 film samples: `tests/scenes/cornell/eldr_final.usda`); ▲ **Karma XPU** and ■ **Karma CPU** with the scene's Karma settings. Karma CPU is the brightness reference.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery/times_dark.svg">
-  <img alt="Render time per scene for Eldr default, Eldr final and Karma" src="docs/images/gallery/times_light.svg" width="100%">
+  <img alt="Render time per scene for each renderer" src="docs/images/gallery/times_light.svg" width="100%">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery/difference_dark.svg">
-  <img alt="Mean absolute difference to Karma per scene for Eldr default and Eldr final" src="docs/images/gallery/difference_light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery/brightness_dark.svg">
+  <img alt="Mean brightness relative to Karma CPU per scene" src="docs/images/gallery/brightness_light.svg" width="100%">
 </picture>
 
-| Scene | Eldr default | Eldr final | Karma | Eldr default vs Karma | Eldr final vs Karma |
-|---|---:|---:|---:|---|---|
-| [base](docs/gallery.md#base) | 3.0 s (0.1 s, 0.9 ms) | 6.1 s (2.9 s, 9.8 ms) | 61.6 s | x0.52, 43% (41%) | x1.07, 7% (4%) |
-| [clearcoat](docs/gallery.md#clearcoat) | 3.1 s (0.1 s, 0.9 ms) | 6.6 s (3.3 s, 11.0 ms) | 47.4 s | x0.63, 35% (26%) | x1.04, 5% (4%) |
-| [depth_of_field](docs/gallery.md#depth_of_field) | 3.0 s (0.1 s, 0.9 ms) | 6.0 s (2.9 s, 9.5 ms) | 68.4 s | x0.52, 44% (40%) | x1.06, 8% (6%) |
-| [displacement](docs/gallery.md#displacement) | 3.1 s (0.1 s, 0.7 ms) | 5.9 s (2.7 s, 9.0 ms) | 48.1 s | x0.63, 37% (28%) | x1.09, 11% (8%) |
-| [exposure](docs/gallery.md#exposure) | 3.1 s (0.1 s, 0.7 ms) | 6.0 s (2.9 s, 9.7 ms) | 68.7 s | x0.52, 43% (41%) | x1.07, 7% (4%) |
-| [glossy](docs/gallery.md#glossy) | 3.1 s (0.1 s, 1.1 ms) | 6.7 s (3.4 s, 11.5 ms) | 35.4 s | x0.65, 31% (31%) | x1.16, 16% (7%) |
-| [height_fog](docs/gallery.md#height_fog) | 3.0 s (0.1 s, 0.8 ms) | 6.0 s (2.9 s, 9.8 ms) | 54.3 s | x0.52, 43% (41%) | x1.07, 7% (4%) |
-| [ies](docs/gallery.md#ies) | 2.9 s (0.1 s, 0.7 ms) | 6.0 s (2.9 s, 9.8 ms) | 71.0 s | x0.35, 62% (94%) | x0.98, 9% (9%) |
-| [instances](docs/gallery.md#instances) | 3.1 s (0.1 s, 1.1 ms) | 6.7 s (3.4 s, 11.5 ms) | 53.5 s | x0.52, 43% (41%) | x1.08, 8% (5%) |
-| [lens_shift](docs/gallery.md#lens_shift) | 2.9 s (0.1 s, 0.6 ms) | 5.6 s (2.5 s, 8.2 ms) | 38.5 s | x0.49, 44% (43%) | x1.07, 6% (4%) |
-| [light_linking](docs/gallery.md#light_linking) | 3.0 s (0.1 s, 0.9 ms) | 6.2 s (3.1 s, 10.4 ms) | 71.3 s | x0.60, 39% (48%) | x1.05, 6% (4%) |
-| [motion_blur](docs/gallery.md#motion_blur) | 3.1 s (0.1 s, 0.9 ms) | 6.4 s (3.2 s, 10.7 ms) | 56.6 s | x0.52, 43% (41%) | x1.07, 7% (4%) |
-| [orthographic](docs/gallery.md#orthographic) | 2.9 s (0.1 s, 0.7 ms) | 5.8 s (2.7 s, 8.9 ms) | 51.0 s | x0.58, 38% (24%) | x1.07, 7% (4%) |
-| [post_processing](docs/gallery.md#post_processing) | 2.9 s (0.1 s, 0.7 ms) | 6.0 s (2.9 s, 9.8 ms) | 53.4 s | x0.52, 43% (41%) | x1.07, 7% (4%) |
-| [render_region](docs/gallery.md#render_region) | 2.9 s (0.1 s, 0.3 ms) | 4.3 s (1.3 s, 3.9 ms) | 17.9 s | x0.57, 38% (31%) | x1.06, 7% (5%) |
-| [subdivision](docs/gallery.md#subdivision) | 3.1 s (0.1 s, 0.7 ms) | 6.3 s (3.1 s, 10.4 ms) | 53.2 s | x0.52, 43% (41%) | x1.07, 7% (4%) |
-| [uv_sets](docs/gallery.md#uv_sets) | 3.2 s (0.1 s, 0.9 ms) | 6.1 s (2.8 s, 9.4 ms) | 40.1 s | x0.66, 31% (28%) | x1.10, 9% (6%) |
-| [volume](docs/gallery.md#volume) | 3.1 s (0.2 s, 2.2 ms) | 7.6 s (4.3 s, 14.8 ms) | 67.2 s | x0.53, 44% (46%) | x1.01, 7% (6%) |
+| Scene | Eldr default | Eldr final | Karma XPU | Karma CPU | Brightness vs Karma CPU (default / final / XPU) |
+|---|---:|---:|---:|---:|---|
+| [Global illumination](docs/gallery.md#global-illumination) | 947 ms | 3.1 s | 25.1 s | 47.2 s | 0.53× / 1.02× / 1.02× |
+| [Clearcoat](docs/gallery.md#clearcoat) | 3.9 s | 3.4 s | 11.0 s | 37.0 s | 0.64× / 1.01× / 1.02× |
+| [Depth of field](docs/gallery.md#depth-of-field) | 877 ms | 2.9 s | 15.4 s | 49.2 s | 0.53× / 1.01× / 1.02× |
+| [Displacement](docs/gallery.md#displacement) | 4.7 s | 10.2 s | 11.3 s | 36.8 s | 0.63× / 1.02× / 1.02× |
+| [Emissive surface lighting](docs/gallery.md#emissive-surface-lighting) | 2.5 s | 6.3 s | 35.4 s | 110.8 s | 0.78× / 1.00× / 1.02× |
+| [Camera exposure](docs/gallery.md#camera-exposure) | 876 ms | 2.9 s | 17.3 s | 57.3 s | 0.53× / 1.02× / 1.02× |
+| [Glass and caustics](docs/gallery.md#glass-and-caustics) | 4.0 s | 8.4 s | 36.0 s | 55.3 s | 0.53× / 1.03× / 1.02× |
+| [Glossy materials](docs/gallery.md#glossy-materials) | 2.9 s | 3.4 s | 9.0 s | 29.7 s | 0.66× / 1.02× / 1.02× |
+| [Hair](docs/gallery.md#hair) | 3.4 s | 8.0 s | 21.2 s | 49.4 s | 0.54× / 1.03× / 1.02× |
+| [Unreal height fog settings](docs/gallery.md#unreal-height-fog-settings) | 932 ms | 3.0 s | 14.5 s | 48.1 s | 0.53× / 1.02× / 1.02× |
+| [Holdout](docs/gallery.md#holdout) | 2.4 s | 6.1 s | 56.8 s | 48.1 s | 0.53× / 1.03× / 1.02× |
+| [IES profile](docs/gallery.md#ies-profile) | 878 ms | 2.9 s | 19.7 s | 66.4 s | 0.35× / 0.94× / 1.07× |
+| [Instances, points, curves](docs/gallery.md#instances-points-curves) | 1.1 s | 3.4 s | 17.1 s | 50.0 s | 0.53× / 1.02× / 1.02× |
+| [Lens shift](docs/gallery.md#lens-shift) | 825 ms | 2.5 s | 10.6 s | 34.2 s | 0.49× / 1.02× / 1.02× |
+| [Light groups](docs/gallery.md#light-groups) | 2.7 s | 6.7 s | 28.8 s | 68.2 s | 0.61× / 1.02× / 1.02× |
+| [Light linking](docs/gallery.md#light-linking) | 936 ms | 3.1 s | 23.7 s | 63.2 s | 0.60× / 1.02× / 1.02× |
+| [Textured area light](docs/gallery.md#textured-area-light) | 1.2 s | 3.9 s | 20.8 s | 62.7 s | 0.55× / 1.03× / 1.03× |
+| [Sheen, thin film, anisotropy](docs/gallery.md#sheen-thin-film-anisotropy) | 1.0 s | 3.4 s | 15.7 s | 51.1 s | 0.53× / 1.02× / 1.02× |
+| [Motion blur](docs/gallery.md#motion-blur) | 2.7 s | 6.3 s | 27.4 s | 50.1 s | 0.53× / 1.02× / 1.02× |
+| [Orthographic camera](docs/gallery.md#orthographic-camera) | 836 ms | 2.7 s | 14.1 s | 45.7 s | 0.58× / 1.03× / 1.01× |
+| [Unreal post-processing settings](docs/gallery.md#unreal-post-processing-settings) | 860 ms | 2.9 s | 14.8 s | 48.1 s | 0.53× / 1.02× / 1.02× |
+| [Render region](docs/gallery.md#render-region) | 282 ms | 1.4 s | 3.9 s | 13.3 s | 0.57× / 1.01× / 1.01× |
+| [Subdivision surfaces](docs/gallery.md#subdivision-surfaces) | 837 ms | 3.1 s | 14.7 s | 48.8 s | 0.53× / 1.02× / 1.02× |
+| [Subsurface scattering](docs/gallery.md#subsurface-scattering) | 2.7 s | 6.9 s | 21.9 s | 56.9 s | 0.51× / 1.01× / 1.02× |
+| [UV sets](docs/gallery.md#uv-sets) | 3.3 s | 6.4 s | 16.6 s | 33.0 s | 0.68× / 1.06× / 1.02× |
+| [Volumes (OpenVDB)](docs/gallery.md#volumes-openvdb) | 3.1 s | 7.6 s | 26.0 s | 59.8 s | 0.54× / 0.98× / 1.02× |
+| [Material lobes](docs/gallery.md#material-lobes) | 8.0 s | 12.1 s | 2.2 s | 7.7 s | 0.96× / 0.98× / 0.98× |
+| [Skin, jade and leaves](docs/gallery.md#skin-jade-and-leaves) | 3.8 s | 7.6 s | 18.5 s | 30.5 s | 0.95× / 0.94× / 1.01× |
+| [Caustics](docs/gallery.md#caustics) | 5.4 s | 11.6 s | 4.8 s | 14.8 s | 0.99× / 1.07× / 1.01× |
+| [Reflections](docs/gallery.md#reflections) | 3.9 s | 4.6 s | 470 ms | 4.5 s | 1.00× / 1.00× / 1.00× |
+| [Curves, points and hair](docs/gallery.md#curves-points-and-hair) | 4.3 s | 6.5 s | 460 ms | 1.4 s | 1.02× / 1.02× / 1.00× |
+| [Light shapes](docs/gallery.md#light-shapes) | 4.7 s | 6.3 s | 1.9 s | 6.4 s | 1.12× / 0.99× / 1.01× |
+| [Many lights](docs/gallery.md#many-lights) | 16.8 s | 24.7 s | 38.8 s | 100.6 s | 0.88× / 0.94× / 1.02× |
+| [Volume multiple scattering](docs/gallery.md#volume-multiple-scattering) | 7.5 s | 11.2 s | 66.1 s | 432.2 s | 0.63× / 1.02× / 1.00× |
+| [Displacement shaders](docs/gallery.md#displacement-shaders) | 4.4 s | 6.9 s | 9.9 s | 5.4 s | 1.01× / 0.99× / 0.99× |
 
-Times are husk wall clock at 512 x 512, including startup and scene load; in brackets Eldr's time in its render pass and the GPU time of one film sample. *vs Karma* is the mean luminance ratio, then the mean absolute difference as rendered and, in brackets, after scaling the image to Karma's mean luminance (exposure-matched), both as a percentage of Karma's mean luminance.
+[docs/gallery.md](docs/gallery.md) has the methodology.
 
-![base, left to right Eldr default, Eldr final and Karma: Gallery base scene: the CC0 Cornell box (cornell-box.usda, unchanged) with the canonical Cornell camera, its ceiling light as a UsdLux RectLight of the same size and radiance, and render settings shared by hdUE and Karma.](docs/images/gallery/base.jpg)
+### Cornell box: one feature per scene
 
-![clearcoat, left to right Eldr default, Eldr final and Karma: Preview Surface clearcoat: red lacquer (clearcoat 1 over a rough red base, left) next to the same base without a coat (right).](docs/images/gallery/clearcoat.jpg)
+The CC0 Cornell box (`tests/scenes/cornell`) plus one small variant layer, rendered at 512 × 512.
 
-![depth_of_field, left to right Eldr default, Eldr final and Karma: Thin-lens depth of field focused on the tall box (USD lens units: tenths of a scene unit).](docs/images/gallery/depth_of_field.jpg)
+#### Global illumination
 
-![displacement, left to right Eldr default, Eldr final and Karma: Preview Surface displacement on a single quad: blurred checker bumps, 0.6 m high, diced and displaced by hdUE.](docs/images/gallery/displacement.jpg)
+The CC0 Cornell box with its measured camera and a RectLight matching the ceiling light.
 
-![exposure, left to right Eldr default, Eldr final and Karma: Camera exposure of +1 stop.](docs/images/gallery/exposure.jpg)
+![Global illumination: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/base.jpg)
 
-![glossy, left to right Eldr default, Eldr final and Karma: Glossy metal on the tall box and a glossy dielectric ball.](docs/images/gallery/glossy.jpg)
+#### Clearcoat
 
-![height_fog, left to right Eldr default, Eldr final and Karma: UE's Exponential Height Fog with Volumetric Fog filling the box, lit by the ceiling light (hdUE only: Karma has no height fog).](docs/images/gallery/height_fog.jpg)
+Preview Surface clearcoat: red lacquer (clearcoat 1 over a rough red base, left) next to the same base without a coat (right).
 
-![ies, left to right Eldr default, Eldr final and Karma: The ceiling light replaced by a point light with an IES profile.](docs/images/gallery/ies.jpg)
+![Clearcoat: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/clearcoat.jpg)
 
-![instances, left to right Eldr default, Eldr final and Karma: A PointInstancer, Points and a cubic BasisCurves helix, with per-instance and per-curve colours.](docs/images/gallery/instances.jpg)
+#### Depth of field
 
-![lens_shift, left to right Eldr default, Eldr final and Karma: Horizontal and vertical aperture offsets (lens shift).](docs/images/gallery/lens_shift.jpg)
+Thin-lens depth of field focused on the tall box (USD lens units: tenths of a scene unit).
 
-![light_linking, left to right Eldr default, Eldr final and Karma: A warm light linked only to the tall box and a cool one only to the short box; the ceiling light lights everything. Lumen still bounces the linked lights onto every surface: UE’s lighting channels only restrict direct light.](docs/images/gallery/light_linking.jpg)
+![Depth of field: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/depth_of_field.jpg)
 
-![motion_blur, left to right Eldr default, Eldr final and Karma: A ball crossing the box during a half-frame shutter.](docs/images/gallery/motion_blur.jpg)
+#### Displacement
 
-![orthographic, left to right Eldr default, Eldr final and Karma: Orthographic projection with a 6.2 m window.](docs/images/gallery/orthographic.jpg)
+Preview Surface displacement on a single quad: blurred checker bumps, 0.6 m high.
 
-![post_processing, left to right Eldr default, Eldr final and Karma: UE's tonemapper (+2.5 stops), bloom, vignette, chromatic aberration, lens flares, film grain and a warm grade on the hdUE beauty; Karma renders the linear image.](docs/images/gallery/post_processing.jpg)
+![Displacement: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/displacement.jpg)
 
-![render_region, left to right Eldr default, Eldr final and Karma: A render region: dataWindowNDC (0.25, 0.15)-(0.75, 0.65) renders only that part of the 512 x 512 frame, as husk tiles do.](docs/images/gallery/render_region.jpg)
+#### Emissive surface lighting
 
-![subdivision, left to right Eldr default, Eldr final and Karma: A Catmull-Clark cube (USD default scheme) with a red GeomSubset on two faces, refined to level 3 in hdUE.](docs/images/gallery/subdivision.jpg)
+The ceiling light is the asset's emissive quad instead of a RectLight: an emissive surface lights the room.
 
-![uv_sets, left to right Eldr default, Eldr final and Karma: Two UV sets: a checker reads st1 (four times st, so 32 x 32 cells) while a left-to-right metallic ramp reads st.](docs/images/gallery/uv_sets.jpg)
+![Emissive surface lighting: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/emissive.jpg)
 
-![volume, left to right Eldr default, Eldr final and Karma: A fog sphere (OpenVDB, density field) in the middle of the box.](docs/images/gallery/volume.jpg)
+#### Camera exposure
+
+Camera exposure of +1 stop.
+
+![Camera exposure: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/exposure.jpg)
+
+#### Glass and caustics
+
+A clear glass ball under the ceiling light: refraction, and the caustic it focuses on the floor.
+
+![Glass and caustics: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/glass.jpg)
+
+#### Glossy materials
+
+Glossy metal on the tall box and a glossy dielectric ball.
+
+![Glossy materials: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/glossy.jpg)
+
+#### Hair
+
+A patch of 900 hair curves on the short box, brown, shaded as hair.
+
+![Hair: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/hair.jpg)
+
+#### Unreal height fog settings
+
+Unreal's height fog settings (`unreal:`) on the base scene; Eldr and Karma ignore them.
+
+![Unreal height fog settings: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/height_fog.jpg)
+
+#### Holdout
+
+A holdout ball (Karma's Matte mode): cut out of the image as black with alpha 0, its shadow still on the floor.
+
+![Holdout: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/holdout.jpg)
+
+#### IES profile
+
+The ceiling light replaced by a point light with an IES profile.
+
+![IES profile: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/ies.jpg)
+
+#### Instances, points, curves
+
+A PointInstancer, Points and a cubic BasisCurves helix, with per-instance and per-curve colours.
+
+![Instances, points, curves: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/instances.jpg)
+
+#### Lens shift
+
+Horizontal and vertical aperture offsets (lens shift).
+
+![Lens shift: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/lens_shift.jpg)
+
+#### Light groups
+
+Two light groups, the ceiling light and a warm lamp, written as their own AOVs; the gallery shows the beauty.
+
+![Light groups: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/light_groups.jpg)
+
+#### Light linking
+
+A warm light linked only to the tall box and a cool one only to the short box; the ceiling light lights everything.
+
+![Light linking: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/light_linking.jpg)
+
+#### Textured area light
+
+The ceiling light shows a four-colour texture, which tints the walls, the floor and a chrome ball.
+
+![Textured area light: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/light_texture.jpg)
+
+#### Sheen, thin film, anisotropy
+
+Three material lobes on balls along the front: velvet sheen, thin-film iridescence and brushed anisotropic metal.
+
+![Sheen, thin film, anisotropy: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/lobes.jpg)
+
+#### Motion blur
+
+A ball crossing the box during a half-frame shutter.
+
+![Motion blur: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/motion_blur.jpg)
+
+#### Orthographic camera
+
+Orthographic projection with a 6.2 m window.
+
+![Orthographic camera: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/orthographic.jpg)
+
+#### Unreal post-processing settings
+
+Unreal's post-processing settings (`unreal:`) on the base scene; Eldr and Karma ignore them and render the linear image.
+
+![Unreal post-processing settings: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/post_processing.jpg)
+
+#### Render region
+
+A render region: dataWindowNDC (0.25, 0.15)-(0.75, 0.65) renders only that part of the frame.
+
+![Render region: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/render_region.jpg)
+
+#### Subdivision surfaces
+
+A Catmull-Clark cube (USD's default scheme) with a red GeomSubset on two faces.
+
+![Subdivision surfaces: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/subdivision.jpg)
+
+#### Subsurface scattering
+
+Subsurface scattering: a jade ball on the floor and a wax ball on the short box.
+
+![Subsurface scattering: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/subsurface.jpg)
+
+#### UV sets
+
+Two UV sets: a checker reads st1 (four times st, so 32 x 32 cells) while a left-to-right metallic ramp reads st.
+
+![UV sets: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/uv_sets.jpg)
+
+#### Volumes (OpenVDB)
+
+A fog sphere (OpenVDB, density field) in the middle of the box.
+
+![Volumes (OpenVDB): Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/volume.jpg)
+
+### Feature scenes
+
+Showcase scenes (`showcase/`) for major features, rendered at their own resolution.
+
+![Material lobes: clearcoat, sheen, fuzz, thin film, anisotropic highlights, hair and toon shading](docs/images/hero.jpg)
+
+*Clearcoat, sheen, fuzz, thin film, anisotropic highlights, hair and toon shading, rendered by Eldr (`showcase/2026-10-30_22_material_lobes`).*
+
+#### Material lobes
+
+Clearcoat, sheen, fuzz, thin film, anisotropic highlights, hair and toon shading. (`showcase/2026-10-30_22_material_lobes`)
+
+![Material lobes: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/material_lobes.jpg)
+
+#### Skin, jade and leaves
+
+Light scatters under the surface of skin, jade and leaves. (`showcase/2026-10-30_13_subsurface`)
+
+![Skin, jade and leaves: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/subsurface.jpg)
+
+#### Caustics
+
+Light focused through glass lands as a bright patch on other surfaces. (`showcase/2026-10-29_13_caustics`)
+
+![Caustics: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/caustics.jpg)
+
+#### Reflections
+
+A ball on a mirror-like floor reflects as a ball, with its highlights, and reflections reflect again up to a limit. (`showcase/2026-11-04_01_reflections`)
+
+![Reflections: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/reflections.jpg)
+
+#### Curves, points and hair
+
+Every curve type as tubes or ribbons, points as spheres or discs, and hair shading. (`showcase/2026-10-30_19_curves_points`)
+
+![Curves, points and hair: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/curves_points.jpg)
+
+#### Light shapes
+
+Sun, sphere, rect, disk and tube lights give highlights of their own shape, and lights set to show their shape appear to the camera. (`showcase/2026-10-30_07_light_shapes`)
+
+![Light shapes: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/light_shapes.jpg)
+
+#### Many lights
+
+Hundreds of small lights are shaded cheaply: each pixel is lit only by the lights that reach it. (`showcase/2026-10-30_06_many_lights`)
+
+![Many lights: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/many_lights.jpg)
+
+#### Volume multiple scattering
+
+Light bounces more than once inside smoke, set with Karma's Volume Limit. (`showcase/2026-10-29_26_volume_multiple_scattering`)
+
+![Volume multiple scattering: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/volume_scattering.jpg)
+
+#### Displacement shaders
+
+Displacement shaders move the surface and cast shadows. (`showcase/2026-10-30_18_displacement`)
+
+![Displacement shaders: Eldr default, Eldr final, Karma XPU, Karma CPU](docs/images/gallery/features/displacement.jpg)
 
 A few features, off and on:
 

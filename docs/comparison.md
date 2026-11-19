@@ -41,7 +41,7 @@
 | Dynamic probe GI | Yes | Partial | Yes | Eldr: ray-traced light probes (DDGI) that move off walls, plus a per-pixel final gather (`eldr:finalGather`). EEVEE: baked irradiance volumes. Unreal: Lumen. |
 | Screen-space GI | Yes | Yes | Yes | Eldr: horizon or visibility-bitmask screen-space GI (SSGI). |
 | GI at Lumen quality (surface cache, many bounces) | No | No | Yes | |
-| Every diffuse bounce by default | Yes | Partial | Partial | Eldr's GI has no bounce limit. Karma's default `karma:object:diffuselimit` is 1, so a closed room renders darker in Karma (Cornell box: Eldr 1.27x Karma's default, within 3% of Karma at 10; docs/testing.md). |
+| Diffuse bounce limit like Karma's | Yes | No | Partial | Unreal: its path tracer only. Eldr's GI follows `eldr:diffuseLimit`, unset Karma's `karma:object:diffuselimit` (default 1). Cornell box, Eldr final over Karma's mean: x1.00 at limit 1, x1.00 at 2, x1.02 at 8 (docs/testing.md). |
 | Screen-space reflections with a denoiser | Yes | Yes | Yes | |
 | Ray-traced reflections | Yes | No | Yes | |
 | Authored reflection probes | Yes | Yes | Yes | Eldr: up to 8, from flagged meshes. |

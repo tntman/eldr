@@ -1,0 +1,30 @@
+#usda 1.0
+(
+    doc = """Eldr's effects without ray tracing over the gallery scenes' /Render/Settings: screen-space GI,
+screen-space reflections with back-face depth and glossy denoise, ambient occlusion, screen-space
+refraction with its ray march, planar mirrors, subsurface, soft jittered shadow maps, denoising and
+256 film samples. Nothing here starts ray tracing (eldr:gi uses ray-traced probes, so it is left out).
+Fog stays off: Karma has no height fog. tests/render_gallery.py sublayers it over a Cornell scene, or
+references </Render/Settings> from a showcase's eldr_default prim, for the Eldr default render."""
+)
+
+over "Render"
+{
+    over "Settings"
+    {
+        custom bool eldr:ssgi = 1
+        custom bool eldr:ambientOcclusion = 1
+        custom bool eldr:ssr = 1
+        custom bool eldr:ssrBackfaceDepth = 1
+        custom bool eldr:ssrDenoise = 1
+        custom bool eldr:refraction = 1
+        custom bool eldr:refractionMarch = 1
+        custom bool eldr:planarReflections = 1
+        custom bool eldr:subsurface = 1
+        custom bool eldr:softShadows = 1
+        custom bool eldr:shadowJitter = 1
+        custom bool eldr:translucentShadows = 1
+        custom bool eldr:denoise = 1
+        custom int eldr:filmSamples = 256
+    }
+}

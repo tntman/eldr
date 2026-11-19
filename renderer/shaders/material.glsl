@@ -120,6 +120,45 @@ vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
     return FetchGrad(r, constant, uv, UV_DX(uv), UV_DY(uv));
 }
 
+// FetchGrad, but where the texture is magnified (a texel wider than the
+// footprint) a cubic B-spline over its texels (four bilinear taps, Sigg and
+// Hadwiger 2005): heights between texels stay smooth, so finely diced
+// displacement and its bump show no texel facets. UDIMs read as FetchGrad.
+// ponytail: ray tracing stages read bilinear (glslc's optimizer crashed on
+// rt_pixels.rgen with it): a traced hit's displaced triangle (rt_evaluate)
+// sits up to a texel's smoothing off the BLAS's (rt_displace.comp, smooth).
+vec4 FetchSmooth(TexRef r, vec4 constant, vec2 uv, vec2 dx, vec2 dy)
+{
+#ifdef RAY_TRACING
+    return FetchGrad(r, constant, uv, dx, dy);
+#endif
+    if (r.index < 0 || r.udim != 0) {
+        return FetchGrad(r, constant, uv, dx, dy);
+    }
+    mat2 a = mat2(r.uvRow0.x, r.uvRow1.x, r.uvRow0.y, r.uvRow1.y);
+    vec2 size = vec2(textureSize(textures[nonuniformEXT(r.index)], 0));
+    vec2 tdx = a * dx * size, tdy = a * dy * size;
+    if (max(dot(tdx, tdx), dot(tdy, tdy)) >= 1.0 || abs(determinant(a)) < 1e-12) {
+        return FetchGrad(r, constant, uv, dx, dy);
+    }
+    vec2 offset = vec2(r.uvRow0.z, r.uvRow1.z);
+    vec2 t = (a * uv + offset) * size - 0.5, i = floor(t), f = t - i;
+    vec2 f2 = f * f, f3 = f2 * f;
+    vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0, w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0, w3 = f3 / 6.0;
+    vec2 g0 = w0 + w1, g1 = w2 + w3;
+    vec2 p0 = (i + 0.5 - 1.0 + w1 / g0) / size, p1 = (i + 0.5 + 1.0 + w3 / g1) / size;  // texture space
+    mat2 back = inverse(a);
+    // One FetchGrad in a loop: four inlined copies overran glslc's ids in rt_pixels.rgen.
+    vec4 sum = vec4(0.0);
+    for (int k = 0; k < 4; ++k) {
+        bvec2 hi = bvec2((k & 1) != 0, (k & 2) != 0);
+        vec2 at = mix(p0, p1, hi), w = mix(g0, g1, hi);
+        sum += w.x * w.y * FetchGrad(r, constant, back * (at - offset), vec2(0.0), vec2(0.0));
+    }
+    return sum;
+}
+
 // What a translucent shadow caster lets through (shadow_tint.frag's tint
 // maps, rt_shadow.rahit's traced shadows): what transmits through a
 // refracting surface loses its two interfaces' reflections at normal

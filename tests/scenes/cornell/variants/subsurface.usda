@@ -1,0 +1,60 @@
+#usda 1.0
+(
+    doc = "Subsurface scattering: a jade ball on the floor and a wax ball on the short box."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    def Material "jade"
+    {
+        token outputs:mtlx:surface.connect = </cornell_box/jade/S.outputs:out>
+        def Shader "S"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.3, 0.75, 0.45)
+            float inputs:specular_roughness = 0.25
+            float inputs:subsurface = 1
+            color3f inputs:subsurface_color = (0.3, 0.75, 0.45)
+            color3f inputs:subsurface_radius = (0.6, 1, 0.7)
+            float inputs:subsurface_scale = 0.3
+            token outputs:out
+        }
+    }
+    def Material "wax"
+    {
+        token outputs:mtlx:surface.connect = </cornell_box/wax/S.outputs:out>
+        def Shader "S"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.7, 0.5)
+            float inputs:specular_roughness = 0.35
+            float inputs:subsurface = 1
+            color3f inputs:subsurface_color = (0.9, 0.7, 0.5)
+            color3f inputs:subsurface_radius = (1, 0.5, 0.25)
+            float inputs:subsurface_scale = 0.2
+            token outputs:out
+        }
+    }
+    def Sphere "jade_ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.75
+        rel material:binding = </cornell_box/jade>
+        double3 xformOp:translate = (4.1, 0.75, 1.2)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "wax_ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.45
+        rel material:binding = </cornell_box/wax>
+        double3 xformOp:translate = (1.86, 2.1, 1.69)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

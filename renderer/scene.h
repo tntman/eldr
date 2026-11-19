@@ -652,7 +652,7 @@ struct DrawInfo {
     uint32_t visible;    // Mesh::rays, 0: not drawn
     uint32_t skin;        // first SkinVertex of the mesh, kNone if rigid
     uint32_t vertexBase;  // the mesh's first vertex in the vertex pool
-    uint32_t vertexColors;  // 1: per-vertex displayColor, else `color`
+    uint32_t vertexColors;  // 1: per-vertex displayColor, >= 2: per instance (DisplayColor in scene.glsl), else `color`
     uint32_t jointCount;
     uint32_t skinXforms;    // first skinning transform
     uint32_t jointBounds;   // first JointBounds

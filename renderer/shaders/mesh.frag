@@ -1221,6 +1221,36 @@ vec3 Irradiance(vec3 d)
          + frame.envSh[8].rgb * 0.546274 * (d.x * d.x - d.y * d.y);
 }
 
+#ifdef LAYERS
+// The coat's reflection of its surroundings at its own roughness (not the
+// base's): the dome, the probes over it, the mirror's planar reflection or
+// else one screen-space ray, then the traced reflection (rt_pixels.rgen
+// traces the coat's lobe). `local`: the probes' normalization (ProbeSpecular).
+vec3 CoatReflection(vec3 n, vec3 v, vec3 local, int mirrorIndex)
+{
+    float cp = layers.coatPerceptual, kept = domeKept;  // the base's splits keep their domeKept
+    vec3 r = reflect(-v, n), c = vec3(0.0);
+    if (frame.envRadiance.w > 0.0) {
+        c = textureLod(envCube, normalize(mat3(frame.envWorldToLocal) * r), cp * float(frame.counts.z - 1u)).rgb *
+            frame.envRadiance.rgb;
+    }
+    if (mirrorIndex >= 0) {
+        c = PlanarSpecular(mirrorIndex, c, inWorldPos, n, cp);
+    } else {
+        if (Feature(kFeatureProbe)) {
+            c = ProbeSpecular(inWorldPos, r, cp, c, n, local);
+        }
+        if (frame.ssr.x > 0.0 && kShadingPass != 2u && !(Feature(kFeatureRtReflections) && RtOpaque())) {
+            vec4 hit;
+            float w = TraceReflection(inWorldPos, r, 2.0 * cp * cp, hit) * (1.0 - smoothstep(0.3, 0.6, cp));
+            c = mix(c, hit.rgb + (1.0 - hit.a) * c, w);
+        }
+    }
+    domeKept = kept;
+    return RtReflection(c, inWorldPos, n, cp);
+}
+#endif
+
 void main()
 {
     // Tile-based adaptive sampling: a stopped tile keeps its ids and motion
@@ -1432,7 +1462,10 @@ void main()
     // No base specular (e.g. standard_surface specular 0): nothing to reflect,
     // so no ray (the crowd's agents: SSR was most of the shading pass).
     const bool reflects = max(max(FssEss.r, FssEss.g), FssEss.b) > 1e-4;
-    float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u && reflects ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+    // Holdouts write black (PassOutput): no ray, or denoised SSR adds its light back later.
+    const bool holdoutPixel = Feature(kFeatureHoldouts) && draws[instances[inSlot].draw].holdout != 0u;
+    float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u && reflects && !holdoutPixel
+                          ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
     // The single ray's direction and width: anisotropic surfaces reflect
     // along their bent normal, as wide as the stretched lobe's mean alpha.
     vec3 ssrDir = reflect(-v, n);
@@ -1497,7 +1530,17 @@ void main()
     if (LightSplits() && Feature(kFeatureRtReflections) && RtOpaque()) {
         domeKept *= 1.0 - imageLoad(rtReflectionImage, ivec2(gl_FragCoord.xy)).a;  // as RtReflection
     }
-    specular = RtReflection(specular, inWorldPos, n, perceptual);
+    // Under a coat the traced reflection is the coat's (CoatReflection).
+    vec3 coatReflection = vec3(0.0);
+#ifdef LAYERS
+    if (layers.coat > 0.0) {
+        coatReflection = CoatReflection(n, v, finalGather ? Lavg * occlusion : Lavg * diffuseAO + SsgiDiffuse(),
+                                        mirrorIndex);
+    } else
+#endif
+    {
+        specular = RtReflection(specular, inWorldPos, n, perceptual);
+    }
     // The diffuse colour already lost what the specular reflects (SetupBase).
     vec3 kd = DiffuseAlbedo(diffuseColor, NoV);
     // With SSGI the bounces are traced: the visibility hides the rest alone.
@@ -1539,7 +1582,7 @@ void main()
     }
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
         splitAmbient = color;
-        color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+        color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO, coatReflection);
         splitCoat += gCoatAmbient;
         // ponytail: the lobes' dome light (coat, sheen, hair) all one way;
         // a sheen under GI's probes counts their light as the dome's too.
