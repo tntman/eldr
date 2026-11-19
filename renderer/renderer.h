@@ -325,7 +325,7 @@ public:
         // instead of GTAO; the probes (gi) or the dome light the rest.
         bool ssgi = false;
         uint32_t ssgiSteps = 8;        // per direction and side (1..32)
-        float ssgiRadius = 1.0f;       // world units
+        float ssgiRadius = 0.0f;       // world units; 0: across the whole screen (gtao.frag)
         uint32_t ssgiResolution = 2;   // traced at 1 / this (1, 2), denoised and upsampled
         // Emissive surfaces as lights: small meshes emitting at least the
         // threshold also light the scene as sphere lights (with shadows);

@@ -4601,10 +4601,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                          frame.sampleDimensions ? dims[kDimSsgi] : float(sample + 1),
                          aoSlices, std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
                          _historyValid,
-                         std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
-                                  frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
+                         // Diffuse Limit 0: no bounced light, the visibility only.
+                         frame.diffuseLimit == 0 ? 0.0f
+                                                 : std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
+                                                            frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
                          _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
-                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * frame.ssgiRadius : 0.0f,
+                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * (frame.ssgiRadius > 0.0f ? frame.ssgiRadius : -1.0f) : 0.0f,
                          frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : -1.0f,
                          frame.ssgiTileOrder ? sample : 0, frame.sampleDimensions ? dims[kDimSsgiJitter] : -1.0f);
         pass("ssgi");
