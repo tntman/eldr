@@ -1406,8 +1406,10 @@ void main()
     if (finalGather) {
         Lavg = gathered;
     }
+    // Under glass the sky light takes its colour (the gather traces it).
     const vec3 indirectDiffuse = finalGather ? Lavg * occlusion
-                                        : Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0) : diffuseColor) +
+                                        : Lavg * TranslucentSkyTint(inWorldPos, n) *
+                                                  MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0) : diffuseColor) +
                                               SsgiDiffuse() * occlusion;
     int mirrorIndex = OnMirror(instances[inSlot].draw, inWorldPos);
     bool mirror = mirrorIndex >= 0;

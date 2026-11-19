@@ -866,6 +866,9 @@ public:
         enum : uint8_t { kRefracts = 1, kHoldout = 2, kShaped = 4, kFlatThin = 8 };
         std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
+        // Per translucent slot: its world bounds' half extents and w 1 for
+        // a single ball or box (DrawInfo::shape; Frame::translucentSkyShadows).
+        std::vector<float> translucentExtents;
         // The kTints meshes' commands and pipeline variants (the tint maps
         // draw them with the translucent ones).
         std::vector<uint32_t> tintCasters;
