@@ -1431,7 +1431,9 @@ void main()
     // No dome: where reflections miss, the bounce light stands in instead
     // of black: the GI probes' around the mirror direction, else SSGI's
     // at the pixel (without either there is no ambient light to show).
-    if (frame.envRadiance.w <= 0.0) {
+    // Glossy surfaces only (SSR's range): on rough ones it brightened the
+    // Cornell box past Karma (mald 0.025 to 0.052).
+    if (frame.envRadiance.w <= 0.0 && perceptual < 0.6) {
         specular = GiDiffuse(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), v, SsgiDiffuse());
     }
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
