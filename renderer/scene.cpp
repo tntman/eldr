@@ -2417,6 +2417,16 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;
         d.vertexColors = m._vertexColors ? 1u : 0u;
+        // displayColor per instance (an instancer's): 2 + its first float in
+        // primvarData, rgb per Instance::index; it wins over the mesh's own.
+        for (const Primvar &pv : m.primvars) {
+            if (pv.rate == Primvar::Rate::Instance && pv.components == 3 && pv.name == "displayColor" &&
+                pv.values.size() >= size_t(m._instanceCount) * 3) {
+                d.vertexColors = 2u + uint32_t(primvarData.size());
+                primvarData.insert(primvarData.end(), pv.values.begin(), pv.values.begin() + size_t(m._instanceCount) * 3);
+                break;
+            }
+        }
         d.jointCount = m._skinCount > 0 ? m.jointCount : 0;
         d.skinXforms = m._skinXformBase;
         d.jointBounds = m._boundsBase;

@@ -564,7 +564,7 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     // dirty prims, and nothing may during a sync (this runs between frames).
     if (changed && _terminalSceneIndex) {
         const HdSceneIndexBaseRefPtr terminal(_terminalSceneIndex);
-        if (key == t.subdivision || key == t.maxRefineLevel || key == t2.screenDicing) {
+        if (key == t.subdivision || key == t.maxRefineLevel || key == t2.screenDicing || key == t2.displacementDicing) {
             if (key == t2.screenDicing) {
                 _dicingView.reset();  // the pass dices again for its camera
             }

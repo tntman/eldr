@@ -27,7 +27,7 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     uvec4 refraction;    // x: interfaces a traced refraction ray passes (rt_refraction.rgen), y 1: displaced
                          // glass bends them, z 1: the first ray sees glass only, up to the prepass depth,
                          // w: paths per pixel through rough glass (Work::refractionRays)
-    vec4 gather;         // final gather (rt_pixels.rgen): x: ray length, y: 1 while on
+    vec4 gather;         // final gather (rt_pixels.rgen): x: ray length, y: 1 while on; z: diffuse limit (GiFeedback)
     vec4 gatherSamples[8];  // this film sample's gather ray points in [0, 1)^2, two per row
     vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off),
                          // z: share of the samples a block gathers in (0: all), w 1: light sampling
@@ -127,6 +127,36 @@ vec3 GiProbePosition(uint probe, ivec3 c)
 // caller's fallback instead). Over the active ones: where the probes on
 // one side are inactive (behind a wall) the ones that see p still light it
 // fully, however small their trilinear share (room edges and corners).
+// Karma's Diffuse Limit (rt.gather.z, eldr:diffuseLimit; above 16:
+// unlimited) as a geometric series: each bounce keeps r of the light (the
+// hit's diffuse albedo), so L bounces hold E_L = D (1 - r^L) / (1 - r) of a
+// probe's directly lit surroundings' D. The probe rays weight the probes'
+// light they see by GiFeedback, whose fixed point is E_L; a final gather
+// ray's hit, one bounce further, sees E_(L-1) = E_L GiGatherShare.
+// ponytail: the hit's albedo stands for the scene's bounce ratio (exact at
+// limits 0, 1 and unlimited; open scenes keep less, so 2-8 run a little dark).
+float GiFeedback(float r)
+{
+    float limit = rt.gather.z;
+    r = clamp(r, 0.01, 0.95);
+    return limit > 16.0 ? 1.0 : limit < 1.5 ? 0.0 : (1.0 - (1.0 - r) / (1.0 - pow(r, limit))) / r;
+}
+
+float GiGatherShare(float r)
+{
+    float limit = rt.gather.z;
+    r = clamp(r, 0.01, 0.95);
+    return limit > 16.0 ? 1.0 : limit < 1.5 ? 0.0 : (1.0 - pow(r, limit - 1.0)) / (1.0 - pow(r, limit));
+}
+
+// The probes' light `gi` keeping `share` of what bounced, beyond `dome`
+// (the dome's unoccluded light: what of gi is the dome's direct light).
+vec3 GiLimit(vec3 gi, vec3 dome, float share)
+{
+    vec3 direct = min(gi, dome);
+    return direct + share * (gi - direct);
+}
+
 vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
 {
     float spacing = rt.giOrigin.w;
@@ -363,7 +393,7 @@ vec3 GiDiffuse(vec3 p, vec3 n, vec3 v, vec3 fallback)
         return fallback;
     }
     vec4 gi = GiIrradiance(p, n, v);
-    return mix(fallback, gi.rgb, gi.a);
+    return mix(fallback, GiLimit(gi.rgb, fallback, rt.gather.z < 0.5 ? 0.0 : 1.0), gi.a);  // limit 0: the dome's alone
 }
 
 // Final gather (rt_pixels.rgen): this opaque pixel's diffuse indirect light

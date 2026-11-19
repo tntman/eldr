@@ -3497,8 +3497,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         float lens[2];
         ScrambledSobol(sobolIndex, kSeedLens, lens, 2);
         const float f = frame.focalLength, focus = frame.focusDistance;
-        const float r = 0.5f * f * focus / (frame.fStop * (focus - f)) * std::sqrt(lens[0]);
-        const float phi = 6.2831853f * lens[1];
+        // Shirley's concentric map: the Sobol points stay stratified on the
+        // disc (the polar map bunches them into arcs, ghost copies at 64).
+        const float sx = 2.0f * lens[0] - 1.0f, sy = 2.0f * lens[1] - 1.0f;
+        const bool wide = std::abs(sx) > std::abs(sy);
+        const float rho = wide ? sx : sy;
+        const float phi = rho == 0.0f ? 0.0f : wide ? 0.785398f * sy / sx : 1.570796f - 0.785398f * sx / sy;
+        const float r = 0.5f * f * focus / (frame.fStop * (focus - f)) * rho;
         const Mat4 inv = ToMat4(frame.invViewProj);
         const Vec3 o = TransformPoint(inv, {0, 0, 0});
         const Vec3 right = Normalize(TransformPoint(inv, {1, 0, 0}) - o), up = Normalize(TransformPoint(inv, {0, 1, 0}) - o);
@@ -3676,6 +3681,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Final gather, on top of the probes.
     rt.gather = rt.gi && frame.depthPrepass && frame.finalGather;
     rt.gatherDistance = frame.finalGatherDistance;
+    rt.diffuseLimit = frame.diffuseLimit;
     // Its rays: this sample's next points of one scrambled Sobol sequence
     // (rays per sample in a row), so the film's directions stratify.
     rt.gatherRays = SampleRays(double(std::clamp(frame.finalGatherRays, 1u, kMaxGatherRays)) * frame.diffuseQuality, spread,
@@ -4806,7 +4812,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                           (frame.fStop * (frame.focusDistance - frame.focalLength)) *
                                           float(frame.width) / frame.sensorWidth
                                     : 0.0f;
-    const float residualScale = 1.0f / std::sqrt(float(std::max(frame.filmSamples, 1u)));
+    // A residual circle sqrt(1.5 / samples) of the lens's: joins neighbouring
+    // lens copies without ripples (1 / sqrt left faint lines in the Cornell
+    // box at 64), and still converges to lens jitter's blur within 8%.
+    const float residualScale = std::sqrt(1.5f / float(std::max(frame.filmSamples, 1u)));
     const bool dof = dofLens && (!lensJitter || (frame.dofResidualBlur && cocPixels * residualScale >= 1.5f));
     // Residual motion blur: time samples render whole copies of the scene,
     // as many as the film has samples, about shutter / filmSamples apart;
