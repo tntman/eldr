@@ -289,4 +289,4 @@ Eldr is licensed under the [Apache License 2.0](LICENSE).
 
 `third_party/nanovdb` holds NanoVDB's `PNanoVDB.h` from OpenVDB (MPL-2.0, unmodified). OpenUSD, Houdini, Vulkan, Intel OIDN and MaterialX keep their own licences.
 
-Banner: Intel Sponza © Intel, CC BY 4.0, rendered with Eldr (`docs/site/banner.py`).
+Banner rendered in Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) with the add-on packages by the Sponza Add-on Package Crew; CC BY 4.0. Rendered with Eldr by `docs/site/banner.py`.
