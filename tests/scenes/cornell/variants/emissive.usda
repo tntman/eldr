@@ -1,0 +1,31 @@
+#usda 1.0
+(
+    doc = "The ceiling light is the asset's emissive quad instead of a RectLight: an emissive surface lights the room."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    over "light" (active = true)
+    {
+    }
+    over "ceiling_light" (active = false)
+    {
+    }
+}
+
+over "Render"
+{
+    over "Settings"
+    {
+        # No light to sample directly, only paths that find the quad: Karma needs more samples.
+        int karma:global:pathtracedsamples = 1024
+    }
+}

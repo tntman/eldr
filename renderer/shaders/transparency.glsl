@@ -483,14 +483,51 @@ vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
                       t.rect.xy + t.rect.zw);
 }
 
+// The colour the dome's diffuse light keeps at p (normal n) under the
+// translucent balls and boxes of frame.tintCasters (Frame::translucentSkyShadows;
+// the AO sees no translucent mesh). Each hides the cosine-weighted share
+// of the sky an ellipsoid of its bounds covers (a sphere's form factor
+// cos * r^2 / d^2, r^2 its projected area / pi) and lets its colour
+// through there: both of its sides, absorbing over the mean chord of its
+// box (4 V / S).
+// ponytail: world-space bounds (a rotated box is its bounding box), the
+// horizon doesn't clip a caster partly under it.
+vec3 TranslucentSkyTint(vec3 p, vec3 n)
+{
+    vec3 tint = vec3(1.0);
+    if (!Feature(kFeatureTranslucentShadows)) {
+        return tint;
+    }
+    for (uint i = 0u; i < frame.tintCasterInfo.x; ++i) {
+        vec4 c = frame.tintCasters[2u * i];
+        vec3 e = max(frame.tintCasters[2u * i + 1u].xyz, vec3(1e-6)), d = c.xyz - p;
+        if (dot(d / e, d / e) < 0.999) {
+            continue;  // inside its bounds' ellipsoid: on or in the caster itself
+        }
+        float l2 = dot(d, d);
+        vec3 u = d * inversesqrt(l2);
+        float hidden = min(max(dot(n, u), 0.0) * e.x * e.y * e.z * length(u / e) / l2, 1.0);
+        uint material = draws[uint(c.w)].material;
+        if (hidden < 1e-3 || material == kNoMaterial) {
+            continue;  // no material: lets everything through
+        }
+        Material m = materials[material];
+        float chord = 4.0 * e.x * e.y * e.z / (e.x * e.y + e.y * e.z + e.z * e.x);
+        vec3 through = clamp(ShadowTransmission(m, vec2(0.5), chord) * ShadowTransmission(m, vec2(0.5), 0.0), 0.0, 1.0);
+        tint *= 1.0 - hidden * (1.0 - through);
+    }
+    return tint;
+}
+
 // The outputs of the passes after the opaque one. OIT: premultiplied
 // colour and coverage times a weight falling with the distance (relative
 // to the nearest translucent mesh's, to the power frame.translucency.w)
 // are summed in location 0; location 3, the revealage, is multiplied by
 // 1 - coverage. Pure highlights (glass at opacity 0) keep a sliver of
 // coverage so they still count. Subsurface: the light in location 0, its
-// alpha the largest radius, location 1 the radii's proportions (10 bits
-// each) and bit 30, so the blur keeps materials apart.
+// alpha the largest radius (with Burley's profile: scattering distance),
+// location 1 the radii's proportions (10 bits each) and bit 30, so the
+// blur keeps materials apart.
 // Holdouts (frame.features.x & kFeatureHoldouts) write nothing but their
 // depth and ids: black with zero alpha in the opaque pass, no light in the
 // subsurface pass, and translucent ones leave what's behind them alone.
@@ -506,8 +543,18 @@ void PassOutput(vec3 color, float alpha)
         return;
     }
     if (kShadingPass == 2u) {
-        vec3 radius = inMaterial != kNoMaterial ? max(ShadingMaterial().subsurfaceRadius.xyz, vec3(1e-6))
-                                                : vec3(1.0);
+        vec3 radius = vec3(1.0);
+        if (inMaterial != kNoMaterial) {
+            Material m = ShadingMaterial();
+            radius = max(m.subsurfaceRadius.xyz, vec3(1e-6));
+            if ((frame.features.x & kFeatureBurley) != 0u) {
+                // Burley's distance d from the mean free path, by the
+                // surface albedo (Christensen and Burley 2015's fit).
+                vec3 a = clamp(m.subsurface.rgb, 0.0, 1.0);
+                vec3 d = abs(a - 0.8);
+                radius = max(radius / (1.85 - a + 7.0 * d * d * d), vec3(1e-6));
+            }
+        }
         float largest = max(radius.r, max(radius.g, radius.b));
         uvec3 q = uvec3(round(radius / largest * 1023.0));
         outColor = vec4(color, largest);

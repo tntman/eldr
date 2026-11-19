@@ -3261,6 +3261,11 @@ int main()
             Expect(on.At(34, 32, 0) < off.At(34, 32, 0), "subsurface: the lit side gives light up");
             Expect(std::abs(on.At(8, 32, 2) - off.At(8, 32, 2)) < 0.01f, "subsurface: far from edges nothing changes");
             frame = IdentityFrame();
+            frame.subsurfaceBurley = false;
+            const Image gaussian = Render(renderer, scene, frame);
+            Expect(gaussian.At(30, 32, 0) - off.At(30, 32, 0) > 0.02f, "subsurface Gaussian profile: light bleeds");
+            Expect(bleedR > gaussian.At(30, 32, 0) - off.At(30, 32, 0),
+                   "subsurface: Burley's profile reaches further than the Gaussian");
             frame.subsurfaceSamples = 1;
             Expect(MaxDifference(Render(renderer, scene, frame), off) < 0.01f, "Frame::subsurfaceSamples 1: no blur");
         }
@@ -3916,7 +3921,7 @@ int main()
             frame.dofJitter = false;
             Expect(MaxDifference(film(frame), post) == 0.0f, "dof jitter: TAA frames keep the post DOF");
             // Residual DOF (Frame::dofResidualBlur, on above): a post DOF of
-            // 1/sqrt(samples) the circle between the lens samples. At 4
+            // sqrt(1.5 / samples) the circle between the lens samples. At 4
             // samples it is nearer the converged spot (256 samples) than
             // lens jitter alone; at 64 it converges to what jitter alone does.
             frame.dofJitter = true;
