@@ -358,6 +358,9 @@ public:
         // (1..64), and the sun shining through their thin parts.
         bool subsurface = true;
         uint32_t subsurfaceSamples = 15;
+        // The blur's profile: Burley's normalized diffusion (as Karma's),
+        // else a Gaussian per channel.
+        bool subsurfaceBurley = true;
         // Holdouts (Mesh::holdout): black with zero alpha; off: drawn as
         // usual.
         bool holdouts = true;
