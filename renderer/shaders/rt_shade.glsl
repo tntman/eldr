@@ -336,7 +336,12 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
         }
     }
     uint traced = 0u;
-    for (uint i = frame.counts.x; i < frame.counts.x + frame.localLights.x; ++i) {
+    // The light grid's cell (lights.comp) lists the lights that reach p;
+    // without it, every local light.
+    uint gridBase = LightGridBase(p);
+    uint localCount = gridBase == kNone ? frame.localLights.x : clusterLights[gridBase];
+    for (uint k = 0u; k < localCount; ++k) {
+        uint i = gridBase == kNone ? frame.counts.x + k : ClusterLight(gridBase, k);
         Light light = lights[i];
         vec3 toLight = light.position.xyz - p;
         float d2 = max(dot(toLight, toLight), 1e-12);

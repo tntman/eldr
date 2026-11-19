@@ -78,6 +78,7 @@ struct FrameData {
     uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
     float tintCasters[2 * kSkyTintCasters][4];  // Frame::translucentSkyShadows: centre, slot; half extents
     uint32_t tintCasterInfo[4];                  // x: how many
+    float lightGrid[2][4];  // world light grid (lights.comp): min xyz, w cells per axis (0: off); max xyz
 };
 
 namespace {
@@ -208,10 +209,13 @@ VkSampler CreateMaterialSampler(VkDevice device, float anisotropy, uint32_t wrap
     return sampler;
 }
 
-// Light clusters (shaders/lights.glsl): 16 x 9 x 24, a count and up to
+// Light clusters (shaders/lights.glsl): 16 x 9 x 24 of the view, then
+// 16 x 16 x 16 of the scene's bounds (traced hits), a count and up to
 // kMaxClusterLights indices each.
 constexpr uint32_t kMaxClusterLights = 255;
-constexpr VkDeviceSize kClusterBytes = 16 * 9 * 24 * (kMaxClusterLights + 1) * sizeof(uint32_t);
+constexpr uint32_t kViewClusters = 16 * 9 * 24, kLightGridCells = 16;
+constexpr VkDeviceSize kClusterBytes =
+    (kViewClusters + kLightGridCells * kLightGridCells * kLightGridCells) * (kMaxClusterLights + 1) * sizeof(uint32_t);
 
 // Push constants of cull.comp; the vertex stages read only the first 64 bytes
 // (mat4 viewProj) of the same range.
@@ -816,7 +820,7 @@ void Renderer::_CreateDescriptors()
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
-        {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
+        {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting | kRt},  // kRt: rt_shade.glsl's light grid
         {15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting},
@@ -2325,8 +2329,12 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     // (all of them on 4096x4096 up to ~680 sphere lights at 64 texels); past
     // that the farthest or dimmest go unshadowed.
     uint32_t tileSize = std::clamp(frame.localShadowResolution, 64u, kShadowAtlasSize / 2);
+    // Frame::localShadowLights: past that many the dimmer ones stay
+    // unshadowed (thousands of lights drew the scene thousands of times a sample).
+    const size_t maxShadowed = std::max(frame.localShadowLights, 1u);
     uint32_t demand = 0;
-    for (size_t i = tileTraced ? 0 : std::min<size_t>(rtSlots, candidates.size()); i < candidates.size(); ++i) {
+    for (size_t i = tileTraced ? 0 : std::min<size_t>(rtSlots, candidates.size()), n = 0;
+         i < candidates.size() && n < maxShadowed; ++i, ++n) {
         demand += candidates[i].caster->coneAngle <= kSpotShadowCone ? 1 : 6;
     }
     const uint32_t sunCount = uint32_t(std::min<size_t>(suns.size(), kMaxSunTiles));
@@ -2349,7 +2357,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     uint32_t used = 0;
     auto place = [&](const Candidate &cand) {
         const uint32_t need = cand.caster->coneAngle <= kSpotShadowCone ? 1 : 6;
-        if (used + need <= capacity) {
+        if (used + need <= capacity && chosen.size() < maxShadowed) {
             chosen.push_back(cand);
             used += need;
         }
@@ -4422,16 +4430,26 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // Light clusters, read by the shading pass.
         if (localLights > kMaxClusterLights && !_clusterWarned) {
             _clusterWarned = true;
-            std::fprintf(stderr, "Eldr: %u local lights; clusters reaching more than %u shade all of them (slower)\n",
+            std::fprintf(stderr, "Eldr: %u local lights; where more than %u reach a part of the view, the strongest of them light it\n",
                          unsigned(localLights), kMaxClusterLights);
         }
+        // Traced hits (rt_shade.glsl) look their lights up in a grid over
+        // the scene's bounds instead of walking every local light.
+        const bool grid = rayTracing && gpu.boundsMax[0] >= gpu.boundsMin[0];
+        for (int k = 0; k < 3; ++k) {
+            fd.lightGrid[0][k] = gpu.boundsMin[k];
+            fd.lightGrid[1][k] = gpu.boundsMax[k];
+        }
+        fd.lightGrid[0][3] = grid ? float(kLightGridCells) : 0.0f;
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _lightsPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
-        vkCmdDispatch(_cmd, (16 * 9 * 24 + 63) / 64, 1, 1);
+        const uint32_t cells = kViewClusters + (grid ? kLightGridCells * kLightGridCells * kLightGridCells : 0);
+        vkCmdDispatch(_cmd, (cells + 63) / 64, 1, 1);
         VkMemoryBarrier2 toShading{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         toShading.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         toShading.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
-        toShading.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        toShading.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                 (grid ? VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR : VK_PIPELINE_STAGE_2_NONE);
         toShading.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
         VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         dep.memoryBarrierCount = 1;

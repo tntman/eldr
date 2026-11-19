@@ -72,6 +72,7 @@ public:
         uint32_t shadowResolution = 2048;      // sun cascades, texels square (256..8192)
         uint32_t shadowCascades = kCascades;   // 1..kCascades
         uint32_t localShadowResolution = 512;  // a local light's atlas tile (64..kShadowAtlasSize / 2)
+        uint32_t localShadowLights = 64;       // at most this many local lights get atlas tiles (the most important)
         uint32_t softShadowSamples = 16;       // PCSS blocker search and filter taps (1..16)
         uint32_t aoSlices = 3;                 // GTAO directions per pixel (1..8)
         uint32_t ssrSteps = 32;                // reflection ray march steps (1..256)

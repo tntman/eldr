@@ -148,6 +148,7 @@ HDVK_SETTING(shadowCascades, "Sun Shadow Cascades (1-4)", int(frame.shadowCascad
 HDVK_SETTING(extraSunShadowMaps, "Further Sun Shadow Maps", frame.extraSunShadowMaps)
 HDVK_SETTING(localShadows, "Local Light Shadows", frame.localShadows)
 HDVK_SETTING(localShadowResolution, "Local Light Shadow Resolution (64-2048)", int(frame.localShadowResolution))
+HDVK_SETTING(localShadowLights, "Local Light Shadow Maps (lights)", int(frame.localShadowLights))
 HDVK_SETTING(softShadows, "Soft Shadows", frame.softShadows)
 HDVK_SETTING(softSunShadows, "Soft Sun Shadows", frame.softSunShadows)
 HDVK_SETTING(softShadowSamples, "Soft Shadow Samples (1-16)", int(frame.softShadowSamples))

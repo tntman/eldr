@@ -70,6 +70,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 tintCasters[16];  // translucent balls and boxes tinting the dome (transparency.glsl TranslucentSkyTint):
                            // per caster its bounds' centre and slot (DrawInfo), then half extents
     uvec4 tintCasterInfo;  // x: how many (up to 8)
+    vec4 lightGrid[2];     // the world light grid (lights.comp): min xyz, w cells per axis (0: off); max xyz
 } frame;
 
 // Unit direction from p towards the viewer: the camera's position, or for
