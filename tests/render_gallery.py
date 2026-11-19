@@ -12,9 +12,15 @@ and the feature scenes (FEATURES, folders of showcase/). Each scene renders four
   karma_cpu     BRAY_HdKarma, the same: the brightness reference
 Renders land in outdir (default %TEMP%/eldr_gallery) and are reused unless --force. A renderer that
 writes no image (Karma XPU on a GPU it can't use) leaves its card out.
-Times: Eldr's time in its render pass (HDVK_TIMING=2, the sum of execute_ms), Karma's render time from
-its log (husk -V2: total less load and update), else the husk wall clock. The Eldr default log must not show a ray tracing pipeline
-compiling ("HdVk rt pipeline"); the script warns when it does.
+Times, from each renderer's own log, scene load left out of the render time and shown on its own:
+  Eldr   renders twice, the first to warm its pipeline cache (shader compiles are a first-run cost, kept
+         as "cold" in times.json). Render: its render passes (HDVK_TIMING=2, the sum of execute_ms) less
+         the loading inside them ("Eldr: loaded in": shaders, textures, rt pipelines, BVH). Load: that line.
+  Karma  husk -V2. Render: the frame's total wall clock less its load and update. Load: load (less husk's
+         start) plus update.
+Samples: Karma Path Traced at a fixed count (the Cornell box's 512, a showcase karma prim's), Eldr its film
+samples (FILM); both on the cards. The Eldr default log must not show a ray tracing pipeline compiling
+("HdVk rt pipeline"); the script warns when it does.
 Each scene's picture is one JPEG: a row of cards (render, renderer, resolution, samples, time,
 brightness against Karma CPU) drawn with Houdini's hoiiotool. Brightness is the mean luminance ratio
 from tests/compare_renderers.py.
@@ -159,15 +165,28 @@ def scenes():
     return out
 
 
-def karma_seconds(log):
-    """Karma's render time from a husk -V2 log: the frame's total wall clock less its load and update."""
+def karma_times(log):
+    """(render, load) seconds from Karma's husk -V2 log. Its clocks: Start and Load since husk started,
+    Update how long the update took, Total when the frame finished."""
     t = open(log, errors="replace").read() if os.path.exists(log) else ""
 
     def last(what):
         m = re.findall(r"%s Wall Clock Time: (\d+):(\d+):(\d+(?:\.\d+)?)" % what, t)
-        return int(m[-1][0]) * 3600 + int(m[-1][1]) * 60 + float(m[-1][2]) if m else None
-    total, load, update = last("Total"), last("Load"), last("Update")
-    return total - (load or 0) - (update or 0) if total is not None else None
+        return int(m[-1][0]) * 3600 + int(m[-1][1]) * 60 + float(m[-1][2]) if m else 0.0
+    total, start, load, update = last("Total"), last("Start"), last("Load"), last("Update")
+    return (total - load - update, load - start + update) if total else (None, None)
+
+
+def eldr_times(log, csv):
+    """(render, load) seconds from Eldr's log and timing CSV: its render passes less the loading in them
+    (shaders, textures, rt pipelines, BVH; sync runs outside them), and all its loading."""
+    rows = list(csvfile.DictReader(open(csv))) if os.path.exists(csv) else []
+    if not rows:
+        return None, None
+    loads = re.findall(r"Eldr: loaded in ([\d.]+) s: .*?sync ([\d.]+)", open(log, errors="replace").read())
+    load = sum(float(a) for a, _ in loads)
+    inside = sum(float(a) - float(b) for a, b in loads)
+    return max(sum(float(x["execute_ms"]) for x in rows) / 1000 - inside, 0.0), load
 
 
 def render(s, outdir, build, force, new):
@@ -205,14 +224,20 @@ def render(s, outdir, build, force, new):
             for f in (exr, csv):
                 if os.path.exists(f):
                     os.remove(f)
-            code, wall = run([HUSK, "-R", plugin, "-s", prim, "-f", "1", "-n", "1", "-V", "2", "-o", exr, scene],
-                             log, dict(env, HDVK_TIMING_CSV=csv))
-            rows = list(csvfile.DictReader(open(csv))) if os.path.exists(csv) else []
-            sec = sum(float(x["execute_ms"]) for x in rows) / 1000 if rows else karma_seconds(log)
+            cmd = [HUSK, "-R", plugin, "-s", prim, "-f", "1", "-n", "1", "-V", "2", "-o", exr, scene]
+            cold = None
+            if r.startswith("eldr"):  # warms the pipeline cache: shader compiles are a first-run cost
+                warm = [os.path.join(d, r + "_cold" + ext) for ext in (".exr", ".log", ".csv")]
+                run(cmd[:-2] + [warm[0], scene], warm[1], dict(env, HDVK_TIMING_CSV=warm[2]))
+                cold = eldr_times(warm[1], warm[2])[1]
+            code, wall = run(cmd, log, dict(env, HDVK_TIMING_CSV=csv))
+            sec, load = eldr_times(log, csv) if r.startswith("eldr") else karma_times(log)
             rt = "HdVk rt pipeline" in open(log, errors="replace").read()
-            known[r] = dict(ok=os.path.exists(exr), wall=wall, sec=sec if sec is not None else wall, rt=rt)
-            print("%-9s %-18s %-13s %s %.1f s (wall %.1f s)%s" % (
-                s["section"], s["name"], r, "ok" if known[r]["ok"] else "FAILED (%d)" % code, known[r]["sec"], wall,
+            known[r] = dict(ok=os.path.exists(exr), wall=wall, sec=sec if sec is not None else wall, load=load,
+                            cold=cold, rt=rt)
+            print("%-9s %-18s %-13s %s %.2f s, load %s (wall %.1f s)%s" % (
+                s["section"], s["name"], r, "ok" if known[r]["ok"] else "FAILED (%d)" % code, known[r]["sec"],
+                "-" if load is None else "%.2f s" % load + ("" if cold is None else ", cold %.1f s" % cold), wall,
                 "  WARNING: ray tracing started" if rt and r == "eldr_default" else ""), flush=True)
             json.dump(known, open(times, "w"))
         if known.get(r, {}).get("ok"):
@@ -249,7 +274,8 @@ def panel(row, rs, path):
         if r not in rs:
             continue
         card = rs[r]["exr"][:-4] + "_card.png"
-        line1 = "%d × %d · %s · %s" % (*row["res"], sampling(r, row["spp"]), duration(rs[r]["sec"]))
+        line1 = "%d × %d · %s · %s%s" % (*row["res"], sampling(r, row["spp"]), duration(rs[r]["sec"]),
+                                         "" if rs[r].get("load") is None else " + %s load" % duration(rs[r]["load"]))
         oiio(rs[r]["exr"], "--ch", "R,G,B", "--croptofull", "--resize", "%dx%d" % (w, h), "--clamp:min=0",
              "--colorconvert", "linear", "sRGB", "--clamp:min=0:max=1",
              "--create", "%dx%d" % (cw, ch), "3", "--fill:color=" + CARD["bg"], "%dx%d+0+0" % (cw, ch),
@@ -352,6 +378,7 @@ def main():
         ref = rs.get("karma_cpu", {}).get("exr")
         for r, v in rs.items():
             row[r + "_sec"] = v["sec"]
+            row[r + "_load"] = v.get("load")
             st = stats(v["exr"], ref) if r != "karma_cpu" else None
             row[r + "_ratio"] = st[1] if st else None
             row[r + "_rt"] = v["rt"]
@@ -370,12 +397,13 @@ def main():
 
 def table(rows, link):
     keys = [r for r, _, _ in RENDERERS]
-    out = ["| Scene | %s | Brightness vs Karma CPU (default / final / XPU) |" % " | ".join(LABEL[k] for k in keys),
-           "|---|" + "---:|" * len(keys) + "---|"]
+    out = ["| Scene | Samples (Eldr / Karma) | %s | Brightness vs Karma CPU (default / final / XPU) |"
+           % " | ".join(LABEL[k] for k in keys), "|---|---|" + "---:|" * len(keys) + "---|"]
     for r in rows:
-        t = [duration(r[k + "_sec"]) if r.get(k + "_sec") is not None else "-" for k in keys]
+        t = ["-" if r.get(k + "_sec") is None else duration(r[k + "_sec"]) + (
+            "" if r.get(k + "_load") is None else " <sub>+ %s</sub>" % duration(r[k + "_load"])) for k in keys]
         b = " / ".join("%.2f×" % r[k + "_ratio"] if r.get(k + "_ratio") else "-" for k in keys[:3])
-        out.append("| %s | %s | %s |" % (link(r), " | ".join(t), b))
+        out.append("| %s | %d / %d | %s | %s |" % (link(r), FILM, r["spp"], " | ".join(t), b))
     return "\n".join(out)
 
 
@@ -401,8 +429,17 @@ METHODOLOGY = ["### Methodology", "",
                "`eldr_final` prim |",
                "| Karma | `BRAY_HdKarmaXPU` and `BRAY_HdKarma` with the scene's settings (Cornell box: 512 path-traced "
                "samples, 8 diffuse bounces; showcases: their `karma` prim, Path Traced, beauty only, domes visible to the camera as in Eldr) |",
-               "| Time | Eldr: time in its render pass (`HDVK_TIMING=2`). Karma: its render time from the husk log. "
-               "Scene load and startup are not counted |",
+               "| Samples | Karma: Path Traced at a fixed count, the same every pixel (Cornell box 512, showcases 256), "
+               "denoised with OIDN on the showcases. Eldr: 256 film samples, all taken (adaptive sampling off), "
+               "denoised with OIDN. Each card shows its count |",
+               "| Render time | From each renderer's own log, scene load left out. Eldr: its render passes "
+               "(`HDVK_TIMING=2`) less the loading inside them. Karma: the frame's wall clock less load and update "
+               "(`husk -V2`). Both include their denoise |",
+               "| Load | The smaller figure after each time (+): Eldr's sync, shader compiles, texture loads, ray "
+               "tracing pipelines and BVH builds; Karma's load and update. husk's own start-up is in neither |",
+               "| Warm cache | Eldr renders each scene twice and times the second: its Vulkan pipeline cache keeps "
+               "compiled shaders between runs, and a scene's first run compiles them (up to 8 s here, by its "
+               "materials and features) |",
                "| Brightness | Mean luminance against Karma CPU's (1.00×: as bright as Karma CPU) |",
                "| Regenerate | `hython tests/render_gallery.py [outdir] [--only base,glossy] [--force]` "
                "(renders, pictures, this page and README.md's gallery) |", ""]

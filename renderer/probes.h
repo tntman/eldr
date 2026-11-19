@@ -66,6 +66,8 @@ public:
     };
     const std::vector<Probe> &Probes() const { return _probes; }
     bool ProbePending() const { return _pending; }
+    // The probe and mirror renderers' shading compiles since the last call.
+    double TakeShadersMs();
 
     // This frame's planar reflections: each image (premultiplied HDR, in
     // TRANSFER_SRC_OPTIMAL), the plane it mirrors (unit normal towards the

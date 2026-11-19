@@ -52,7 +52,10 @@ Every scene renders four ways with husk: ● **Eldr default**, every effect that
 | Eldr default | `tests/scenes/cornell/eldr_default.usda` over the scene's settings (a showcase's `eldr_default` prim), `husk -R HdVkRendererPlugin`; no ray tracing starts |
 | Eldr final | `tests/scenes/cornell/eldr_final.usda` over `/Render/Settings`, or a showcase's `eldr_final` prim |
 | Karma | `BRAY_HdKarmaXPU` and `BRAY_HdKarma` with the scene's settings (Cornell box: 512 path-traced samples, 8 diffuse bounces; showcases: their `karma` prim, Path Traced, beauty only, domes visible to the camera as in Eldr) |
-| Time | Eldr: time in its render pass (`HDVK_TIMING=2`). Karma: its render time from the husk log. Scene load and startup are not counted |
+| Samples | Karma: Path Traced at a fixed count, the same every pixel (Cornell box 512, showcases 256), denoised with OIDN on the showcases. Eldr: 256 film samples, all taken (adaptive sampling off), denoised with OIDN. Each card shows its count |
+| Render time | From each renderer's own log, scene load left out. Eldr: its render passes (`HDVK_TIMING=2`) less the loading inside them. Karma: the frame's wall clock less load and update (`husk -V2`). Both include their denoise |
+| Load | The smaller figure after each time (+): Eldr's sync, shader compiles, texture loads, ray tracing pipelines and BVH builds; Karma's load and update. husk's own start-up is in neither |
+| Warm cache | Eldr renders each scene twice and times the second: its Vulkan pipeline cache keeps compiled shaders between runs, and a scene's first run compiles them (up to 8 s here, by its materials and features) |
 | Brightness | Mean luminance against Karma CPU's (1.00×: as bright as Karma CPU) |
 | Regenerate | `hython tests/render_gallery.py [outdir] [--only base,glossy] [--force]` (renders, pictures, this page and README.md's gallery) |
 

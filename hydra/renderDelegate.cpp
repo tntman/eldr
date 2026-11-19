@@ -1089,7 +1089,8 @@ void HdVkRenderDelegate::NoteFrame()
     const double sync = _loadSyncMs;
     _loadSyncMs = 0;
     const double total = t.shadersMs + textures + t.rtPipelinesMs + t.bvhMs + sync;
-    if (total < 250.0) {  // an edit or a camera move, not a load
+    // An edit or a camera move, not a load (the first frame always tells).
+    if (total < 250.0 && !_loadLine.empty()) {
         return;
     }
     // With the memory it took: the GPU's (Eldr's allocations) and the

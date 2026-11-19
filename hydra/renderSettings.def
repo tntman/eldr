@@ -91,6 +91,7 @@ HDVK_SETTING(adaptivePixelFraction, "Adaptive Sampling Converged Pixel Fraction"
 HDVK_SETTING(adaptiveMinSamples, "Adaptive Sampling Min Samples", int(frame.adaptiveMinSamples))
 HDVK_SETTING(adaptiveTiles, "Adaptive Sampling Skips Stopped Tiles", frame.adaptiveTiles)
 HDVK_SETTING(effectDenoiseSamples, "Effect Denoise Fade (samples)", int(frame.effectDenoiseSamples))
+HDVK_SETTING(denoiseGuideSamples, "Denoise Guide Samples", int(frame.denoiseGuideSamples))
 HDVK_SETTING(directClamp, "Direct Light Clamp (radiance)", frame.directClamp)
 HDVK_SETTING(indirectClamp, "Indirect Light Clamp (radiance)", -1.0f)
 HDVK_SETTING(colorLimit, "Color Limit (radiance)", -1.0f)

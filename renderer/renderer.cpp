@@ -635,6 +635,16 @@ Renderer::Renderer(Device &device)
     lap("volume pass");
 }
 
+Renderer::LoadTimes Renderer::TakeLoadTimes()
+{
+    LoadTimes t = _load;
+    _load = {};
+    if (_reflections) {
+        t.shadersMs += _reflections->TakeShadersMs();
+    }
+    return t;
+}
+
 Renderer::~Renderer()
 {
     const auto t0 = std::chrono::steady_clock::now();
@@ -5096,6 +5106,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::copy(out.aovComponents, out.aovComponents + Aovs::kCount, aovComponents);
     }
     aovTargets[Aovs::kBeautyRaw] = nullptr;
+    const bool appAovs = Aovs::Any(aovTargets);
     const Aovs::Kind guideKinds[2] = {Aovs::kAlbedo, Aovs::kNormal};
     for (int g = 0; g < 2; ++g) {
         const Aovs::Kind k = guideKinds[g];
@@ -5108,7 +5119,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     _aovsRecorded = Aovs::Any(aovTargets);
     _aovLightScale = frame.lightAovScale;
-    if (_aovsRecorded) {
+    // The guides alone settled: the readback keeps the last ones recorded.
+    const bool guidesSettled =
+        film && !appAovs && frame.denoiseGuideSamples > 0 && _filmSamples > frame.denoiseGuideSamples;
+    if (_aovsRecorded && !guidesSettled) {
         Aovs::Params params;
         std::memcpy(params.view, frame.view, sizeof(params.view));
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
