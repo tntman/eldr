@@ -37,7 +37,13 @@ from compare_renderers import HUSK, oiio, run, stats  # noqa: E402
 CORNELL = os.path.join(HERE, "scenes", "cornell")
 SHOWCASE = os.path.join(REPO, "showcase")
 IMAGES = os.path.join(REPO, "docs", "images", "gallery")
-NOTES = {}
+FILM = 256  # eldr:filmSamples of eldr_default.usda, eldr_final.usda and the showcases' eldr_final prims
+
+RENDERERS = [("eldr_default", "Eldr default", "circle"), ("eldr_final", "Eldr final", "diamond"),
+             ("karma_xpu", "Karma XPU", "triangle"), ("karma_cpu", "Karma CPU", "square")]
+LABEL = {r: l for r, l, _ in RENDERERS}
+GLYPH = {"circle": "●", "diamond": "◆", "triangle": "▲", "square": "■"}
+COLOURS = {"light": {"eldr_default": "#2f6fd0", "eldr_final": "#d9732b", "karma_xpu": "#8a4fd0", "karma_cpu": "#6e7781",
                      "text": "#1f2328", "grid": "#d0d7de", "bg": "#ffffff"},
            "dark": {"eldr_default": "#6ea8fe", "eldr_final": "#f0a35e", "karma_xpu": "#c29bff", "karma_cpu": "#a0a8b0",
                     "text": "#e6edf3", "grid": "#30363d", "bg": "#0d1117"}}
@@ -66,10 +72,7 @@ DESCRIPTIONS = {
     "render_region": "A render region: dataWindowNDC (0.25, 0.15)-(0.75, 0.65) renders only that part of the frame.",
 }
 # What a card shows in Eldr that differs from Karma on purpose or by a known limitation.
-NOTES = {
-    "displacement": "Eldr displaces mesh vertices and doesn't dice, so this four-vertex quad shows only the bumped "
-                    "shading, not the bumps Karma dices.",
-}
+NOTES = {}
 # Feature scenes: (name, showcase folder, heading). Their eldr_default prim gets eldr_default.usda.
 FEATURES = [("material_lobes", "2026-10-30_22_material_lobes", "Material lobes"),
             ("subsurface", "2026-10-30_13_subsurface", "Skin, jade and leaves"),
