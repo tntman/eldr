@@ -69,6 +69,7 @@ RENDERERS = [
     ("karma_cpu", "Karma CPU", "Path traced, 4 diffuse bounces, OIDN", "BRAY_HdKarma", "square"),
 ]
 LABEL = {r[0]: r[1] for r in RENDERERS}
+KARMA_LIMIT = 600  # seconds: husk --timelimit for Karma (its card says "time-limited" when it stops early)
 HARDWARE = ("AMD Ryzen 9 3950X 16C/32T, 48 GB, GTX 1080 Ti 11 GB driver 582.78 (no RT cores), Windows 11 Pro, "
             "Houdini 22.0.466")
 CREDIT = ("Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) and add-ons by the Sponza Add-on "
@@ -157,7 +158,9 @@ def render(view, outdir, build, force):
                     os.remove(f)
             for attempt in range(2):  # ponytail: one retry for an intermittent crash in Eldr's parallel mesh sync
                 code, wall, mem = husk([HUSK, "-R", plugin, "-s", "/Render/" + r, "-f", "1", "-n", "1", "-V", "2",
-                                        "-o", exr, layer], log, dict(env, HDVK_TIMING_CSV=csv))
+                                        "-o", exr, layer] + ([] if plugin == "HdVkRendererPlugin" else
+                                                             ["--timelimit", str(KARMA_LIMIT)]),
+                                       log, dict(env, HDVK_TIMING_CSV=csv))
                 if os.path.exists(exr) or "Fatal error" not in open(log, errors="replace").read():
                     break
                 os.replace(log, log[:-4] + "_crash.log")
@@ -177,7 +180,10 @@ def render(view, outdir, build, force):
 
 def info(x, r, layer):
     """A card's lines under its name: resolution, samples, times; brightness and GPU memory."""
-    line1 = "%d × %d · %s · %s render · %s load" % (*resolution(layer), samples(layer, r), duration(x["sec"]),
+    spp = samples(layer, r)
+    if r.startswith("karma") and x["sec"] >= KARMA_LIMIT - 5:
+        spp = "≤ " + spp + ", time-limited"
+    line1 = "%d × %d · %s · %s render · %s load" % (*resolution(layer), spp, duration(x["sec"]),
                                                    duration(max(0, x["wall"] - x["sec"])))
     line2 = "Brightness reference" if r == "karma_cpu" else (
         "Brightness %.2f× Karma CPU" % x["ratio"] if x.get("ratio") is not None else "")
@@ -227,7 +233,8 @@ def section(results=None):
           "and a 9,000-agent crowd, rendered with husk at 960 × 540 (the crowd at 1280 × 720): "
           "● **Eldr raster + SSGI**, every effect without ray tracing (`tests/scenes/cornell/eldr_default.usda`); "
           "◆ **Eldr ray traced** (`tests/scenes/cornell/eldr_final.usda`); ▲ **Karma XPU** (256 path-traced "
-          "samples) and ■ **Karma CPU** (128), both with 4 diffuse bounces and OIDN. Karma CPU is the brightness "
+          "samples) and ■ **Karma CPU** (128), both with 4 diffuse bounces and OIDN, stopped after 10 minutes "
+          "(*time-limited* on the card). Karma CPU is the brightness "
           "reference. *Render* is the time in the renderer (Eldr: its render pass; Karma: its log's render time), "
           "*load* the rest of husk's run (startup, scene load and sync); *GPU* the memory Eldr's render took. "
           "The layers are in `tests/scenes/production`; `python tests/render_production.py` renders them again.", "",
