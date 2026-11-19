@@ -1428,6 +1428,12 @@ void main()
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
     vec3 domeSpecular = specular, domeDiffuse = Lavg;  // the dome's alone (light splits)
+    // No dome: where reflections miss, the bounce light stands in instead
+    // of black: the GI probes' around the mirror direction, else SSGI's
+    // at the pixel (without either there is no ambient light to show).
+    if (frame.envRadiance.w <= 0.0) {
+        specular = GiDiffuse(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), v, SsgiDiffuse());
+    }
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
     // Final gather: traced, so occluded already; neither AO nor SSGI on it.
