@@ -1,6 +1,6 @@
 #usda 1.0
 (
-    doc = "A holdout ball: cut out of the image as a black matte (alpha 0), its shadow still on the floor."
+    doc = "A holdout ball (Karma's Matte mode): cut out of the image as black with alpha 0, its shadow still on the floor."
     defaultPrim = "cornell_box"
     metersPerUnit = 1
     upAxis = "Z"
@@ -16,7 +16,7 @@ over "cornell_box"
     def Sphere "ball"
     {
         double radius = 0.75
-        int primvars:karma:object:holdoutmode = 2
+        int primvars:karma:object:holdoutmode = 1
         double3 xformOp:translate = (4.1, 0.75, 1.2)
         uniform token[] xformOpOrder = ["xformOp:translate"]
     }

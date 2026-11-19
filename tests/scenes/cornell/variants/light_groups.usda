@@ -20,7 +20,7 @@ over "cornell_box"
     def SphereLight "lamp"
     {
         color3f inputs:color = (1, 0.6, 0.3)
-        float inputs:intensity = 8
+        float inputs:intensity = 300
         float inputs:radius = 0.12
         string inputs:karma:light:lpetag = "lamp"
         double3 xformOp:translate = (1.0, 3.2, 1.2)

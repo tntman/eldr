@@ -1,7 +1,7 @@
 """Render the gallery with Eldr and Karma and write docs/gallery.md, docs/images/gallery/ and README.md's
 Gallery section.
 
-  python tests/render_gallery.py [outdir] [--only base,glossy] [--force] [--build <repo>/build-h22l]
+  hython tests/render_gallery.py [outdir] [--only base,glossy] [--force] [--build <repo>/build-h22l]
 
 Two sections. The Cornell box (tests/scenes/cornell: cornell.usda and every variants/*.usda, 512 x 512)
 and the feature scenes (FEATURES, folders of showcase/). Each scene renders four ways through husk:
@@ -13,7 +13,7 @@ and the feature scenes (FEATURES, folders of showcase/). Each scene renders four
 Renders land in outdir (default %TEMP%/eldr_gallery) and are reused unless --force. A renderer that
 writes no image (Karma XPU on a GPU it can't use) leaves its card out.
 Times: Eldr's time in its render pass (HDVK_TIMING=2, the sum of execute_ms), Karma's render time from
-its log (husk -V2), else the husk wall clock. The Eldr default log must not show a ray tracing pipeline
+its log (husk -V2: total less load and update), else the husk wall clock. The Eldr default log must not show a ray tracing pipeline
 compiling ("HdVk rt pipeline"); the script warns when it does.
 Each scene's picture is one JPEG: a row of cards (render, renderer, resolution, samples, time,
 brightness against Karma CPU) drawn with Houdini's hoiiotool. Brightness is the mean luminance ratio
@@ -32,8 +32,10 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from compare_renderers import HUSK, oiio, run, stats  # noqa: E402
+from compare_renderers import HUSK, karma_layer, oiio, run, stats  # noqa: E402
 
+# hython sets OCIO to Houdini's config, where hoiiotool's "linear" isn't the sRGB primaries' linear.
+os.environ.pop("OCIO", None)
 CORNELL = os.path.join(HERE, "scenes", "cornell")
 SHOWCASE = os.path.join(REPO, "showcase")
 IMAGES = os.path.join(REPO, "docs", "images", "gallery")
@@ -158,10 +160,14 @@ def scenes():
 
 
 def karma_seconds(log):
-    """Karma's render time from a husk -V2 log, else None."""
+    """Karma's render time from a husk -V2 log: the frame's total wall clock less its load and update."""
     t = open(log, errors="replace").read() if os.path.exists(log) else ""
-    m = re.findall(r"[Rr]ender [Tt]ime[:= ]+(?:(\d+):)?(\d+(?:\.\d+)?)", t)
-    return (float(m[-1][0] or 0) * 60 + float(m[-1][1])) if m else None
+
+    def last(what):
+        m = re.findall(r"%s Wall Clock Time: (\d+):(\d+):(\d+(?:\.\d+)?)" % what, t)
+        return int(m[-1][0]) * 3600 + int(m[-1][1]) * 60 + float(m[-1][2]) if m else None
+    total, load, update = last("Total"), last("Load"), last("Update")
+    return total - (load or 0) - (update or 0) if total is not None else None
 
 
 def render(s, outdir, build, force, new):
@@ -173,17 +179,23 @@ def render(s, outdir, build, force, new):
     if s["section"] == "cornell":
         default = layer(os.path.join(d, "default_layer.usda"), usd, sublayer=os.path.join(CORNELL, "eldr_default.usda"))
         final = layer(os.path.join(d, "final_layer.usda"), usd, sublayer=os.path.join(CORNELL, "eldr_final.usda"))
-    else:
+    karma = usd
+    if s["section"] != "cornell":
         default = layer(os.path.join(d, "default_layer.usda"), usd,
                         reference=("eldr_default", os.path.join(CORNELL, "eldr_default.usda")))
         final = usd
+        # Karma: domes shown to the camera as Eldr shows them, beauty only (a showcase's products carry
+        # Eldr's vars), Path Traced at the karma prim's samples (Karma's default Variance mode stops early).
+        from pxr import Usd
+        karma = karma_layer(Usd.Stage.Open(usd), usd, os.path.join(d, "karma_layer.usda"), True, prims["karma"],
+                            s["spp"])
     env = dict(os.environ, MSYS_NO_PATHCONV="1", HOUDINI_PACKAGE_DIR=os.path.join(build, "houdini"),
                PXR_PLUGINPATH_NAME=build, HDVK_TIMING="2")
     env.setdefault("HOUDINI_USER_PREF_DIR", os.path.join(outdir, "hprefs__HVER__"))
     jobs = {"eldr_default": ("HdVkRendererPlugin", default, prims["eldr_default"]),
             "eldr_final": ("HdVkRendererPlugin", final, prims["eldr_final"]),
-            "karma_xpu": ("BRAY_HdKarmaXPU", usd, prims["karma"]),
-            "karma_cpu": ("BRAY_HdKarma", usd, prims["karma"])}
+            "karma_xpu": ("BRAY_HdKarmaXPU", karma, prims["karma"]),
+            "karma_cpu": ("BRAY_HdKarma", karma, prims["karma"])}
     times = os.path.join(d, "times.json")
     known = json.load(open(times)) if os.path.exists(times) else {}
     out = {}
@@ -359,7 +371,7 @@ def main():
 def table(rows, link):
     keys = [r for r, _, _ in RENDERERS]
     out = ["| Scene | %s | Brightness vs Karma CPU (default / final / XPU) |" % " | ".join(LABEL[k] for k in keys),
-           "|---|%s|---|" % "---:|" * len(keys)]
+           "|---|" + "---:|" * len(keys) + "---|"]
     for r in rows:
         t = [duration(r[k + "_sec"]) if r.get(k + "_sec") is not None else "-" for k in keys]
         b = " / ".join("%.2f×" % r[k + "_ratio"] if r.get(k + "_ratio") else "-" for k in keys[:3])
@@ -388,11 +400,11 @@ METHODOLOGY = ["### Methodology", "",
                "| Eldr final | `tests/scenes/cornell/eldr_final.usda` over `/Render/Settings`, or a showcase's "
                "`eldr_final` prim |",
                "| Karma | `BRAY_HdKarmaXPU` and `BRAY_HdKarma` with the scene's settings (Cornell box: 512 path-traced "
-               "samples, 8 diffuse bounces; showcases: their `karma` prim) |",
+               "samples, 8 diffuse bounces; showcases: their `karma` prim, Path Traced, beauty only, domes visible to the camera as in Eldr) |",
                "| Time | Eldr: time in its render pass (`HDVK_TIMING=2`). Karma: its render time from the husk log. "
                "Scene load and startup are not counted |",
                "| Brightness | Mean luminance against Karma CPU's (1.00×: as bright as Karma CPU) |",
-               "| Regenerate | `python tests/render_gallery.py [outdir] [--only base,glossy] [--force]` "
+               "| Regenerate | `hython tests/render_gallery.py [outdir] [--only base,glossy] [--force]` "
                "(renders, pictures, this page and README.md's gallery) |", ""]
 
 

@@ -1,6 +1,6 @@
 #usda 1.0
 (
-    doc = "A patch of 900 hair curves on the short box, with a brown hair-like material."
+    doc = "A patch of 900 hair curves on the short box, brown, shaded as hair."
     defaultPrim = "cornell_box"
     metersPerUnit = 1
     upAxis = "Z"
