@@ -37,13 +37,7 @@ from compare_renderers import HUSK, oiio, run, stats  # noqa: E402
 CORNELL = os.path.join(HERE, "scenes", "cornell")
 SHOWCASE = os.path.join(REPO, "showcase")
 IMAGES = os.path.join(REPO, "docs", "images", "gallery")
-FILM = 256  # eldr:filmSamples of eldr_default.usda, eldr_final.usda and the showcases' eldr_final prims
-
-RENDERERS = [("eldr_default", "Eldr default", "circle"), ("eldr_final", "Eldr final", "diamond"),
-             ("karma_xpu", "Karma XPU", "triangle"), ("karma_cpu", "Karma CPU", "square")]
-LABEL = {r: l for r, l, _ in RENDERERS}
-GLYPH = {"circle": "●", "diamond": "◆", "triangle": "▲", "square": "■"}
-COLOURS = {"light": {"eldr_default": "#2f6fd0", "eldr_final": "#d9732b", "karma_xpu": "#8a4fd0", "karma_cpu": "#6e7781",
+NOTES = {}
                      "text": "#1f2328", "grid": "#d0d7de", "bg": "#ffffff"},
            "dark": {"eldr_default": "#6ea8fe", "eldr_final": "#f0a35e", "karma_xpu": "#c29bff", "karma_cpu": "#a0a8b0",
                     "text": "#e6edf3", "grid": "#30363d", "bg": "#0d1117"}}

@@ -9,6 +9,8 @@
 #include "rt.glsl"
 #include "gi.glsl"
 
+layout(std430, set = 0, binding = 31) readonly buffer PrimvarData { float primvarData[]; };  // DISPLAY_COLOR
+
 // The surface a ray hit: position, normals and the material's inputs at
 // the hit (constants and textures; material programs are not run).
 layout(location = 0) rayPayloadInEXT RtHit hit;
@@ -60,7 +62,9 @@ void main()
     float uvArea = abs(e1.x * e2.y - e1.y * e2.x);
     rtUvFootprint = hit.t * gl_HitTEXT * sqrt(uvArea / max(worldArea, 1e-20));
 
-    vec3 color = d.vertexColors != 0u ? RtColor(v0) * b.x + RtColor(v1) * b.y + RtColor(v2) * b.z : d.color.rgb;
+    uint instance = uint(gl_InstanceID) >= rt.skinned.x ? rtSkinned[uint(gl_InstanceID) - rt.skinned.x].instance
+                                                       : uint(gl_InstanceID);
+    vec3 color = DISPLAY_COLOR(d, instances[instance].index, RtColor(v0) * b.x + RtColor(v1) * b.y + RtColor(v2) * b.z);
     vec3 baseColor = color, emissive = vec3(0.0);
     float metallic = 0.0, roughness = 0.5;
     if (d.material != kNoMaterial) {

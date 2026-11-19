@@ -3916,7 +3916,7 @@ int main()
             frame.dofJitter = false;
             Expect(MaxDifference(film(frame), post) == 0.0f, "dof jitter: TAA frames keep the post DOF");
             // Residual DOF (Frame::dofResidualBlur, on above): a post DOF of
-            // 1/sqrt(samples) the circle between the lens samples. At 4
+            // sqrt(1.5 / samples) the circle between the lens samples. At 4
             // samples it is nearer the converged spot (256 samples) than
             // lens jitter alone; at 64 it converges to what jitter alone does.
             frame.dofJitter = true;

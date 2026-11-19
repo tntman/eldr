@@ -237,7 +237,7 @@ void main()
     vec3 prevWorld = pc.motion != 0u ? (prevModel * vec4(prevPosition, 1.0)).xyz + facingOffset : world.xyz;
     outWorldPos = vec4(world.xyz, prevWorld.x);
     outNormal = vec4(facing ? facingNormal : normalMatrix * inNormal, prevWorld.y);
-    outColor = vec4(d.vertexColors != 0u ? inVertexColor.rgb : d.color.rgb, prevWorld.z);
+    outColor = vec4(DISPLAY_COLOR(d, inst.index, inVertexColor.rgb), prevWorld.z);
     outSlot = entry;
 #ifdef GRAPH
     outPrimvars = d.primvarVertices == kFreeSlot ? vec4(0.0)
