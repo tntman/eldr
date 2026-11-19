@@ -1,0 +1,392 @@
+"""Renders the README banner (docs/images/banner.gif, banner.jpg) with Eldr through husk.
+Run from the repo root: python docs\\site\\banner.py [layer] [render] [comp] [gif] (default: all).
+layer: writes docs/site/banner_sponza.usda: Intel's Sponza (CC BY 4.0, not in the repo: SPONZA,
+default E:/usd-testscenes/sponza) with its curtains, ivy and cypress add-ons, Eldr's feature objects
+in the atrium, an animated camera and a final settings prim. render: husk with Eldr's Houdini
+build (ELDR_H22_BUILD, default build-h22) into ELDR_BANNER_TMP (default: a folder in the system
+temp); ELDR_BANNER_TEST=1 renders /Render/bannerTest (few samples), ELDR_BANNER_FRAMES="1 37"
+only those frames. comp: tonemaps each linear EXR (ACES 2.0 SDR) and lays the title over it.
+gif: hffmpeg with a palette per GIF."""
+import math
+import os
+import pathlib
+import random
+import subprocess
+import sys
+import tempfile
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+HFS = pathlib.Path(os.environ.get("ELDR_HFS", r"C:\Program Files\Side Effects Software\Houdini 22.0.466"))
+H22 = pathlib.Path(os.environ.get("ELDR_H22_BUILD", ROOT / "build-h22"))
+TMP = pathlib.Path(os.environ.get("ELDR_BANNER_TMP", pathlib.Path(tempfile.gettempdir()) / "eldr_banner"))
+SPONZA = pathlib.Path(os.environ.get("SPONZA", "E:/usd-testscenes/sponza"))
+SPONZA_LAYERS = [  # strongest first
+    "pkg_a_curtains/NewSponza_Curtains_USD_YUp.usda",
+    "pkg_b_ivy/NewSponza_IvyGrowth_USD_YUp.usda",
+    "pkg_c_trees/NewSponza_CypressTree_USDA_YUp.usda",
+    "main_sponza/NewSponza_Main_USD_Yup_003.usda",
+]
+LAYER = ROOT / "docs" / "site" / "banner_sponza.usda"
+OIIO = HFS / "bin" / "hoiiotool.exe"
+W, H, FRAMES, FPS = 1280, 480, 72, 24
+GIF_W = 960
+EXPOSURE = 1.0  # linear gain before the display transform
+SAMPLES, TEST_SAMPLES = 128, 16
+
+# Scene units are centimetres (Sponza's). The camera dollies forward and sideways and pulls focus
+# from a near object to the far light panel and back, all on sin/cos of the frame: frame 73 is frame 1.
+EYE, LOOK = (520.0, 45.0, 40.0), (-400.0, 110.0, -10.0)
+DOLLY, SWAY = 40.0, 30.0
+FOCAL, H_APERTURE, F_STOP = 28.0, 36.0, 1.0
+FOCUS_NEAR, FOCUS_FAR = (250.0, 25.0, -60.0), (-280.0, 75.0, 0.0)
+SUN = (0.42, -0.88, 0.2)  # the direction sunlight travels
+ORB_CENTRE, ORB_RADIUS, ORB_TURNS = (60.0, 30.0, 40.0), 75.0, 2
+
+
+def run(cmd, env=None):
+    print(" ".join(map(str, cmd)), flush=True)
+    subprocess.run(list(map(str, cmd)), check=True, env=env)
+
+
+def norm(v):
+    n = math.sqrt(sum(c * c for c in v))
+    return [c / n for c in v]
+
+
+def cross(a, b):
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+
+def matrix(p, forward):
+    """A transform at p whose -Z looks along forward, +Y up."""
+    z = norm([-c for c in forward])
+    x = norm(cross((0, 1, 0), z))
+    y = cross(z, x)
+    rows = [x + [0], y + [0], z + [0], list(p) + [1]]
+    return "( %s )" % ", ".join("(%s)" % ", ".join("%.6g" % v for v in r) for r in rows)
+
+
+def phase(frame):
+    return 2 * math.pi * (frame - 1) / FRAMES
+
+
+def eye(frame):
+    fwd = norm([LOOK[i] - EYE[i] for i in range(3)])
+    side = norm(cross(fwd, (0, 1, 0)))
+    t = phase(frame)
+    d, s = DOLLY * (1 - math.cos(t)) / 2, SWAY * math.sin(t)
+    return [EYE[i] + fwd[i] * d + side[i] * s for i in range(3)], fwd
+
+
+def focus(frame):
+    p, fwd = eye(frame)
+    k = (1 - math.cos(phase(frame))) / 2  # 0 at frame 1: the near object is sharp
+    target = [FOCUS_NEAR[i] + k * (FOCUS_FAR[i] - FOCUS_NEAR[i]) for i in range(3)]
+    return sum((target[i] - p[i]) * fwd[i] for i in range(3))
+
+
+def orb(t):
+    a = 2 * math.pi * ORB_TURNS * (t - 1) / FRAMES
+    return (ORB_CENTRE[0] + ORB_RADIUS * math.cos(a), ORB_CENTRE[1] + 8 * math.sin(2 * a),
+            ORB_CENTRE[2] + ORB_RADIUS * math.sin(a))
+
+
+def hair():
+    """A tuft of strands springing from a small disc: bspline curves, 5 points each."""
+    rng = random.Random(7)
+    pts = []
+    n = 500
+    for _ in range(n):
+        r, a = 7 * math.sqrt(rng.random()), rng.random() * 2 * math.pi
+        out = 0.35 + 0.65 * r / 7  # outer strands lean further out
+        h = 30 + 18 * rng.random()
+        lean = 22 * out * (0.7 + 0.6 * rng.random())
+        for k in range(5):
+            u = k / 4
+            rr = r + lean * u * u
+            pts.append((rr * math.cos(a), h * u * (1 - 0.25 * u * u * out), rr * math.sin(a)))
+    return n, ", ".join("(%.2f, %.2f, %.2f)" % p for p in pts)
+
+
+def sphere(name, mtl, p, r):
+    return '''def Sphere "%s" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = %g
+    rel material:binding = </banner/mtl/%s>
+    double3 xformOp:translate = (%g, %g, %g)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+''' % (name, r, mtl, p[0], p[1], p[2])
+
+
+def mtlx(name, **inputs):
+    lines = "\n".join("            %s inputs:%s = %s" % ({str: "color3f", bool: "bool"}.get(type(v), "float"),
+                                                         k, v if not isinstance(v, bool) else int(v))
+                      for k, v in inputs.items())
+    return '''    def Material "%(n)s"
+    {
+        token outputs:mtlx:surface.connect = </banner/mtl/%(n)s/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+%(l)s
+            token outputs:out
+        }
+    }
+''' % dict(n=name, l=lines)
+
+
+def rel(path):
+    return os.path.relpath(ROOT / path, LAYER.parent).replace("\\", "/")
+
+
+def settings(name, samples):
+    return '''    def RenderSettings "%s" (
+        references = @%s@</Render/final>
+    )
+    {
+        rel camera = </banner/cam>
+        uniform int2 resolution = (%d, %d)
+        custom bool eldr:denoise = 1
+        custom int eldr:filmSamples = %d
+        custom bool eldr:fog = 1
+        custom float eldr:fogDensity = 0.0004
+        custom float eldr:fogHeightFalloff = 0.002
+        custom bool eldr:gi = 1
+        custom bool eldr:motionBlur = 1
+        custom bool eldr:rtShadows = 1
+    }
+''' % (name, rel("tests/scenes/final_settings.usda"), W, H, samples)
+
+
+def layer():
+    missing = [l for l in SPONZA_LAYERS if not (SPONZA / l).exists()]
+    if missing:
+        sys.exit("banner.py: Intel Sponza is missing under %s (%s). Download the Sponza 2022 main scene and "
+                 "the curtains, ivy and trees add-ons (CC BY 4.0) and set SPONZA to the folder." %
+                 (SPONZA, ", ".join(missing)))
+    cam = ",\n".join("            %d: %s" % (f, matrix(*eye(f))) for f in range(0, FRAMES + 2))
+    foc = ",\n".join("            %d: %.2f" % (f, focus(f)) for f in range(0, FRAMES + 2))
+    orbs = ",\n".join("            %g: (%.2f, %.2f, %.2f)" % ((t / 2,) + orb(t / 2)) for t in range(0, 2 * FRAMES + 4))
+    n, hair_points = hair()
+    sub = ",\n".join("        @%s@" % (SPONZA / l).as_posix() for l in SPONZA_LAYERS)
+    wax = dict(base_color="(0.9, 0.8, 0.62)", specular_roughness=0.35, subsurface=1.0,
+               subsurface_color="(0.95, 0.72, 0.4)", subsurface_radius="(1, 0.55, 0.25)", subsurface_scale=4.0)
+    LAYER.write_text('''#usda 1.0
+(
+    doc = """README banner: written by docs/site/banner.py layer. Intel Sponza (CC BY 4.0) with
+its curtains, ivy and cypress add-ons, read from %(sponza)s (not in the repo)."""
+    endTimeCode = %(end)d
+    framesPerSecond = %(fps)d
+    metersPerUnit = 0.01
+    renderSettingsPrimPath = "/Render/banner"
+    startTimeCode = 1
+    subLayers = [
+%(sub)s
+    ]
+    timeCodesPerSecond = %(fps)d
+    upAxis = "Y"
+)
+
+# The cypress add-on is in metres: scaled to Sponza's centimetres, moved behind the light panel.
+over "Italian_Cypress_Dense_Custom_05b"
+{
+    matrix4d xformOp:transform = ( (100, 0, 0, 0), (0, 0, -100, 0), (0, 100, 0, 0), (-620, 0, -170, 1) )
+}
+
+def Xform "banner"
+{
+def Camera "cam"
+{
+    float focalLength = %(focal)g
+    float fStop = %(fstop)g
+    float focusDistance.timeSamples = {
+%(foc)s
+    }
+    float horizontalAperture = %(hap)g
+    float verticalAperture = %(vap).4f
+    double shutter:open = -0.25
+    double shutter:close = 0.25
+    matrix4d xformOp:transform.timeSamples = {
+%(cam)s
+    }
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:angle = 0.53
+    color3f inputs:color = (1, 0.9, 0.78)
+    float inputs:intensity = 5
+    bool inputs:normalize = 1
+    matrix4d xformOp:transform = %(sun)s
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.6
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
+
+# A textured panel facing the camera at the far end of the objects; the camera sees it.
+def RectLight "panel"
+{
+    float inputs:height = 90
+    float inputs:intensity = 3
+    bool inputs:karma:light:renderlightgeo = 1
+    asset inputs:texture:file = @%(quadrants)s@
+    float inputs:width = 130
+    float xformOp:rotateY = -90
+    double3 xformOp:translate = (-280, 75, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}
+
+# An IES spot (tests/scenes/cornell/beam.ies) above the wax pillar and the hair.
+def SphereLight "iesSpot" (prepend apiSchemas = ["ShapingAPI"])
+{
+    color3f inputs:color = (1, 0.8, 0.55)
+    float inputs:exposure = 9
+    float inputs:intensity = 1
+    float inputs:radius = 5
+    asset inputs:shaping:ies:file = @%(ies)s@
+    float xformOp:rotateX = -90
+    double3 xformOp:translate = (205, 330, 70)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+%(spheres)s
+def Sphere "glass" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    bool primvars:karma:object:causticsenable = 1 (interpolation = "constant")
+    double radius = 32
+    rel material:binding = </banner/mtl/glass>
+    double3 xformOp:translate = (60, 32, 40)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+# A glowing orb circling the glass ball: it lights the floor and blurs with its motion.
+def Sphere "orb" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 6
+    rel material:binding = </banner/mtl/glow>
+    double3 xformOp:translate.timeSamples = {
+%(orbs)s
+    }
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Cylinder "wax" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    token axis = "Y"
+    double height = 55
+    double radius = 13
+    rel material:binding = </banner/mtl/wax>
+    double3 xformOp:translate = (230, 27.5, 110)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def BasisCurves "hair"
+{
+    uniform token basis = "bspline"
+    int[] curveVertexCounts = [%(counts)s]
+    point3f[] points = [%(hair)s]
+    color3f[] primvars:displayColor = [(0.75, 0.5, 0.22)] (interpolation = "constant")
+    uniform token type = "cubic"
+    float[] widths = [0.25] (interpolation = "constant")
+    double3 xformOp:translate = (180, 0, 30)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "mtl"
+{
+%(glass)s%(chrome)s%(steel)s%(paint)s%(film)s%(wax)s
+    def Material "glow"
+    {
+        token outputs:surface.connect = </banner/mtl/glow/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (12, 6, 2.4)
+            token outputs:surface
+        }
+    }
+}
+}
+
+def Scope "Render"
+{
+%(settings)s}
+''' % dict(sponza=SPONZA.as_posix(), end=FRAMES, fps=FPS, sub=sub, focal=FOCAL, fstop=F_STOP, foc=foc,
+           hap=H_APERTURE, vap=H_APERTURE * H / W, cam=cam, sun=matrix((0, 0, 0), SUN), orbs=orbs,
+           quadrants=rel("tests/scenes/textures/quadrants.png"), ies=rel("tests/scenes/cornell/beam.ies"),
+           spheres="".join([sphere("chrome", "chrome", (110, 30, -120), 30),
+                            sphere("brushed", "steel", (-60, 26, 150), 26),
+                            sphere("carPaint", "paint", (250, 25, -60), 25),
+                            sphere("thinFilm", "film", (-40, 26, -40), 26)]),
+           counts=", ".join(["5"] * n), hair=hair_points,
+           glass=mtlx("glass", specular_IOR=1.5, specular_roughness=0.0, transmission=1.0),
+           chrome=mtlx("chrome", base_color="(0.95, 0.95, 0.95)", metalness=1.0, specular_roughness=0.03),
+           steel=mtlx("steel", base_color="(0.9, 0.9, 0.92)", metalness=1.0, specular_anisotropy=0.8,
+                      specular_roughness=0.35),
+           paint=mtlx("paint", base_color="(0.55, 0.03, 0.02)", coat=1.0, coat_roughness=0.03, metalness=0.5,
+                      specular_roughness=0.45),
+           film=mtlx("film", base_color="(0.01, 0.01, 0.01)", specular_roughness=0.12, thin_film_IOR=1.4,
+                     thin_film_thickness=400.0),
+           wax=mtlx("wax", **wax), settings=settings("banner", SAMPLES) + "\n" + settings("bannerTest", TEST_SAMPLES)))
+
+
+def render():
+    TMP.mkdir(parents=True, exist_ok=True)
+    prefs = TMP / "hprefs"
+    prefs.mkdir(exist_ok=True)
+    env = dict(os.environ, HOUDINI_USER_PREF_DIR=str(prefs), HOUDINI_PACKAGE_DIR=str(H22 / "houdini"),
+               PXR_PLUGINPATH_NAME=str(H22),
+               PXR_AR_DEFAULT_SEARCH_PATH=str(HFS / "bin/usd_plugins/hdx/resources/textures"))
+    env.pop("PYTHONPATH", None)
+    settings = "/Render/bannerTest" if os.environ.get("ELDR_BANNER_TEST") == "1" else "/Render/banner"
+    frames = [int(f) for f in os.environ.get("ELDR_BANNER_FRAMES", "").split()]
+    ranges = [(f, 1) for f in frames] or [(1, FRAMES)]
+    for first, count in ranges:
+        run([HFS / "bin" / "husk.exe", "-R", "HdVkRendererPlugin", "-s", settings, "--res", W, H,
+             "-f", first, "-n", count, "-o", TMP / "frame.$F4.exr", LAYER], env)
+
+
+def overlay():
+    """The title over a dark band, as an RGBA image in display colours."""
+    out = TMP / "overlay.exr"
+    # "El" in the accent, "dr" white at El's advance (123 px at size 150): the word's ink centres on 640.
+    # No shadow: oiiotool draws it in the complement colour, a light rim around the accent.
+    title = "--text:x=%d:y=262:size=150:font=segoeuib:color=%s"
+    run([OIIO, "--create", "%dx%d" % (W, H), 4,
+         "--fill:top=0,0,0,0:bottom=0,0,0,0.6", "%dx150+0+90" % W,
+         "--fill:top=0,0,0,0.6:bottom=0,0,0,0", "%dx150+0+240" % W,
+         title % (497, "1,0.36,0.12,1"), "El", title % (620, "1,1,1,1"), "dr",
+         "--text:x=640:y=318:size=28:xalign=center:font=segoeui:shadow=1:color=0.92,0.92,0.92,1",
+         "A Vulkan Hydra render delegate for OpenUSD, MaterialX and Houdini Solaris", "-o", out])
+    return out
+
+
+def comp():
+    ov = overlay()
+    frames = [int(f) for f in os.environ.get("ELDR_BANNER_FRAMES", "").split()] or range(1, FRAMES + 1)
+    for f in frames:
+        run([OIIO, ov, "-i", TMP / ("frame.%04d.exr" % f), "--ch", "R,G,B", "--mulc", EXPOSURE,
+             '--ociodisplay:from=Linear Rec.709 (sRGB)', "sRGB - Display", "ACES 2.0 - SDR 100 nits (Rec.709)",
+             "--ch", "R,G,B,A=1.0", "--over", "--ch", "R,G,B", "-d", "uint8", "-o", TMP / ("comp.%04d.png" % f)])
+
+
+def gif():
+    images = ROOT / "docs" / "images"
+    run([OIIO, TMP / "comp.0001.png", "-o:quality=88", images / "banner.jpg"])
+    run([HFS / "bin" / "hffmpeg.exe", "-y", "-loglevel", "error", "-framerate", FPS, "-i", TMP / "comp.%04d.png",
+         "-filter_complex", "scale=%d:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=full[p];"
+         "[b][p]paletteuse=dither=sierra2_4a" % GIF_W, "-loop", 0, images / "banner.gif"])
+    print("banner.gif: %.2f MB" % ((images / "banner.gif").stat().st_size / 1e6))
+
+
+if __name__ == "__main__":
+    steps = sys.argv[1:] or ["layer", "render", "comp", "gif"]
+    for step in steps:
+        globals()[step]()

@@ -1,7 +1,7 @@
 <div align="center">
 
 <p align="center">
-  <img src="docs/images/hero.jpg" alt="Eldr: a Vulkan Hydra render delegate for OpenUSD and Houdini Solaris" width="100%">
+  <img src="docs/images/banner.gif" alt="Eldr: A Vulkan Hydra render delegate for OpenUSD, MaterialX and Houdini Solaris" width="100%">
 </p>
 
 <h1>Eldr</h1>
@@ -288,3 +288,5 @@ The test suite has about 55 ctests: renderer unit checks (`vkrtest`), Hydra and 
 Eldr is licensed under the [Apache License 2.0](LICENSE).
 
 `third_party/nanovdb` holds NanoVDB's `PNanoVDB.h` from OpenVDB (MPL-2.0, unmodified). OpenUSD, Houdini, Vulkan, Intel OIDN and MaterialX keep their own licences.
+
+Banner: Intel Sponza © Intel, CC BY 4.0, rendered with Eldr (`docs/site/banner.py`).
