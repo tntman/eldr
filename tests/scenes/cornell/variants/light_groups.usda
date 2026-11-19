@@ -1,0 +1,54 @@
+#usda 1.0
+(
+    doc = "Two light groups, the ceiling light and a warm lamp, written as their own AOVs; the gallery shows the beauty."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    over "ceiling_light"
+    {
+        string inputs:karma:light:lpetag = "ceiling"
+    }
+    def SphereLight "lamp"
+    {
+        color3f inputs:color = (1, 0.6, 0.3)
+        float inputs:intensity = 300
+        float inputs:radius = 0.12
+        string inputs:karma:light:lpetag = "lamp"
+        double3 xformOp:translate = (1.0, 3.2, 1.2)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+over "Render"
+{
+    over "Product"
+    {
+        rel orderedVars = [</Render/Vars/color>, </Render/Vars/beauty_ceiling>, </Render/Vars/beauty_lamp>]
+    }
+    over "Vars"
+    {
+        def RenderVar "beauty_ceiling"
+        {
+            uniform token dataType = "color3f"
+            uniform string sourceName = "C.*<L.'ceiling'>"
+            uniform token sourceType = "lpe"
+            string driver:parameters:aov:name = "beauty_ceiling"
+        }
+        def RenderVar "beauty_lamp"
+        {
+            uniform token dataType = "color3f"
+            uniform string sourceName = "C.*<L.'lamp'>"
+            uniform token sourceType = "lpe"
+            string driver:parameters:aov:name = "beauty_lamp"
+        }
+    }
+}

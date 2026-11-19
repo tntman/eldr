@@ -20,6 +20,9 @@
 namespace vkr {
 
 // std140 mirror of FrameData in shaders/frame.glsl.
+// Translucent balls and boxes that tint the dome's light under them (Frame::translucentSkyShadows).
+constexpr uint32_t kSkyTintCasters = 8;
+
 struct FrameData {
     float viewProj[16];
     float invViewProj[16];
@@ -73,6 +76,8 @@ struct FrameData {
                                // w 1: screen-space refraction marches the depth buffer (Frame::refractionMarch)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
     uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
+    float tintCasters[2 * kSkyTintCasters][4];  // Frame::translucentSkyShadows: centre, slot; half extents
+    uint32_t tintCasterInfo[4];                  // x: how many
 };
 
 namespace {
@@ -171,6 +176,8 @@ constexpr uint32_t kFeatureMultiScatter = 1u << 26;
 constexpr uint32_t kFeatureCaustics = 1u << 27;
 // shadow_tint.frag: only caustic casters go into the tint maps (Frame::translucentShadows off).
 constexpr uint32_t kFeatureTintCastersOnly = 1u << 28;
+// frame.glsl: the subsurface blur uses Burley's profile.
+constexpr uint32_t kFeatureBurley = 1u << 29;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
@@ -3040,7 +3047,8 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
     }
     vkCmdEndRendering(_cmd);
     _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits,
-                     std::max(frame.directIntensity, 0.0f), std::max(frame.indirectIntensity, 0.0f));
+                     std::max(frame.directIntensity, 0.0f), std::max(frame.indirectIntensity, 0.0f),
+                     frame.subsurfaceBurley, _stats.sample);
 }
 
 void Renderer::CropToTile(const Frame &frame, float *viewProj, float *invViewProj, bool undo)
@@ -3497,8 +3505,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         float lens[2];
         ScrambledSobol(sobolIndex, kSeedLens, lens, 2);
         const float f = frame.focalLength, focus = frame.focusDistance;
-        const float r = 0.5f * f * focus / (frame.fStop * (focus - f)) * std::sqrt(lens[0]);
-        const float phi = 6.2831853f * lens[1];
+        // Shirley's concentric map: the Sobol points stay stratified on the
+        // disc (the polar map bunches them into arcs, ghost copies at 64).
+        const float sx = 2.0f * lens[0] - 1.0f, sy = 2.0f * lens[1] - 1.0f;
+        const bool wide = std::abs(sx) > std::abs(sy);
+        const float rho = wide ? sx : sy;
+        const float phi = rho == 0.0f ? 0.0f : wide ? 0.785398f * sy / sx : 1.570796f - 0.785398f * sx / sy;
+        const float r = 0.5f * f * focus / (frame.fStop * (focus - f)) * rho;
         const Mat4 inv = ToMat4(frame.invViewProj);
         const Vec3 o = TransformPoint(inv, {0, 0, 0});
         const Vec3 right = Normalize(TransformPoint(inv, {1, 0, 0}) - o), up = Normalize(TransformPoint(inv, {0, 1, 0}) - o);
@@ -3676,6 +3689,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Final gather, on top of the probes.
     rt.gather = rt.gi && frame.depthPrepass && frame.finalGather;
     rt.gatherDistance = frame.finalGatherDistance;
+    rt.diffuseLimit = frame.diffuseLimit;
     // Its rays: this sample's next points of one scrambled Sobol sequence
     // (rays per sample in a row), so the film's directions stratify.
     rt.gatherRays = SampleRays(double(std::clamp(frame.finalGatherRays, 1u, kMaxGatherRays)) * frame.diffuseQuality, spread,
@@ -4014,12 +4028,35 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (translucentShadows || volumeShadows || localVolumeShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
+    // The translucent balls and boxes nearest the camera that tint the
+    // dome's light under them (transparency.glsl TranslucentSkyTint).
+    fd.tintCasterInfo[0] = 0;
+    if (translucentShadows && frame.translucentShadows && frame.translucentSkyShadows) {
+        std::vector<std::pair<float, size_t>> nearest;
+        for (size_t i = 0; i < gpu.translucent.size(); ++i) {
+            const float *c = &gpu.translucentCenters[i * 4];
+            if (gpu.translucentExtents[i * 4 + 3] > 0.0f) {
+                const Vec3 d{c[0] - frame.cameraPos[0], c[1] - frame.cameraPos[1], c[2] - frame.cameraPos[2]};
+                nearest.push_back({Dot(d, d), i});
+            }
+        }
+        std::sort(nearest.begin(), nearest.end());
+        for (size_t k = 0; k < std::min<size_t>(nearest.size(), kSkyTintCasters); ++k) {
+            const size_t i = nearest[k].second;
+            float *c = fd.tintCasters[2 * k], *e = fd.tintCasters[2 * k + 1];
+            std::copy_n(&gpu.translucentCenters[i * 4], 3, c);
+            c[3] = float(gpu.translucent[i]);
+            std::copy_n(&gpu.translucentExtents[i * 4], 3, e);
+            e[3] = 0.0f;
+            ++fd.tintCasterInfo[0];
+        }
+    }
     if (frame.holdouts && gpu.holdouts) {
         fd.features[0] |= kFeatureHoldouts;
     }
     // Subsurface scattering blurs by the prepass depth.
     if (draw && frame.subsurface && frame.depthPrepass && !gpu.subsurface.empty()) {
-        fd.features[0] |= kFeatureSubsurface;
+        fd.features[0] |= kFeatureSubsurface | (frame.subsurfaceBurley ? kFeatureBurley : 0u);
     }
     if (frame.volumes && frame.volume.resolution >= 2 && gpu.volumeCount > 0) {
         _volumePass->EnsureHalf(_width, _height);
@@ -4595,10 +4632,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                          frame.sampleDimensions ? dims[kDimSsgi] : float(sample + 1),
                          aoSlices, std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
                          _historyValid,
-                         std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
-                                  frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
+                         // Diffuse Limit 0: no bounced light, the visibility only.
+                         frame.diffuseLimit == 0 ? 0.0f
+                                                 : std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
+                                                            frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
                          _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
-                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * frame.ssgiRadius : 0.0f,
+                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * (frame.ssgiRadius > 0.0f ? frame.ssgiRadius : -1.0f) : 0.0f,
                          frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : -1.0f,
                          frame.ssgiTileOrder ? sample : 0, frame.sampleDimensions ? dims[kDimSsgiJitter] : -1.0f);
         pass("ssgi");
@@ -4806,7 +4845,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                           (frame.fStop * (frame.focusDistance - frame.focalLength)) *
                                           float(frame.width) / frame.sensorWidth
                                     : 0.0f;
-    const float residualScale = 1.0f / std::sqrt(float(std::max(frame.filmSamples, 1u)));
+    // A residual circle sqrt(1.5 / samples) of the lens's: joins neighbouring
+    // lens copies without ripples (1 / sqrt left faint lines in the Cornell
+    // box at 64), and still converges to lens jitter's blur within 8%.
+    const float residualScale = std::sqrt(1.5f / float(std::max(frame.filmSamples, 1u)));
     const bool dof = dofLens && (!lensJitter || (frame.dofResidualBlur && cocPixels * residualScale >= 1.5f));
     // Residual motion blur: time samples render whole copies of the scene,
     // as many as the film has samples, about shutter / filmSamples apart;

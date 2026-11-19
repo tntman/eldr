@@ -55,6 +55,11 @@ layout(location = 0) out vec2 outAo;  // visibility, distance to the camera (0 =
 const float PI = 3.14159265359;
 const float HALF_PI = 1.57079632679;
 const int kSteps = 3;  // per side
+#ifdef SSGI
+const int kRefine = 4;  // bisecting steps per side towards the last surface's edge
+#else
+const int kRefine = 0;
+#endif
 
 vec3 WorldPos(vec2 uv, float depth)
 {
@@ -178,14 +183,29 @@ void main()
     float radius = pc.params.x;
     float pixelSize = length(WorldPos(uv + vec2(pc.params.z, 0.0), depth) - surface);
     float radiusPixels = radius / max(pixelSize, 1e-20);
+#ifdef SSGI
+    // Radius 0 (Frame::ssgiRadius auto): across the whole screen with no
+    // falloff, so a room's far walls and ceiling light it (a hit's light is
+    // its own, unlike AO's, so distance needn't fade it).
+    const bool across = radius <= 0.0;
+    if (across) {
+        radiusPixels = float(max(size.x, size.y));
+        radius = radiusPixels * pixelSize;
+    }
+    // Weight falls off over the outer 20% of the radius: what it fades
+    // goes to the dome or the probes, so a closed room keeps it dark.
+    const float falloff = 0.2;
+#else
+    const bool across = false;
+    const float falloff = 0.615;  // XeGTAO's default
+#endif
     if (radiusPixels < 1.0 || any(isnan(n))) {
         OUTPUT(1.0, distanceToEye, light);
         return;
     }
-    // Weight falls off over the outer 61.5% of the radius (XeGTAO defaults).
-    float falloffRange = 0.615 * radius;
-    float falloffMul = -1.0 / falloffRange;
-    float falloffAdd = radius * (1.0 - 0.615) / falloffRange + 1.0;
+    float falloffRange = falloff * radius;
+    float falloffMul = across ? 0.0 : -1.0 / falloffRange;
+    float falloffAdd = across ? 1.0 : radius * (1.0 - falloff) / falloffRange + 1.0;
     float minS = 1.3 / radiusPixels;  // never sample the center pixel
 
 #ifdef SSGI
@@ -240,23 +260,46 @@ void main()
                           : stepNoise;
         float jitter = fract(jitterNoise + 0.618034 * float(slice));
 #endif
-        for (int s = 0; s < steps; ++s) {
-            float t = (float(s) + stepNoise) / float(steps);
-            t = t * t + minS;  // denser near the center
-            float stepPixels = t * radiusPixels;
-            if (estimator) {
-                stepPixels = max(stepPixels, lastPixels + 1.0);
-                lastPixels = stepPixels;
-            }
-            ivec2 offset = ivec2(round(stepPixels * omega));
-            for (int side = 0; side < 2; ++side) {
-                ivec2 sq = side == 0 ? q + offset : q - offset;
-                if (any(lessThan(sq, ivec2(0))) || any(greaterThanEqual(sq, size))) {
-                    continue;  // off screen: no occluder known
+        // Per side: the farthest step on a surface, and the first one past
+        // it off any (background or off screen; < 0: none). The refining
+        // steps after the march bisect between them: the highest horizon
+        // usually lies at that edge (a room's far rim, the screen's edge),
+        // so the march's sparse far steps would miss part of the arc.
+        vec2 lo = vec2(0.0), hi = vec2(-1.0);
+        for (int s = 0; s < steps + kRefine; ++s) {
+            float stepPixels = 0.0;
+            if (s < steps) {
+                float t = (float(s) + stepNoise) / float(steps);
+                t = t * t + minS;  // denser near the center
+                stepPixels = t * radiusPixels;
+                if (estimator) {
+                    stepPixels = max(stepPixels, lastPixels + 1.0);
+                    lastPixels = stepPixels;
                 }
-                float sd = texelFetch(sceneDepth, sq, 0).r;
+            }
+            for (int side = 0; side < 2; ++side) {
+                float pixels = stepPixels;
+                if (s >= steps) {
+                    if (hi[side] < 0.0 || hi[side] - lo[side] < 1.0) {
+                        continue;
+                    }
+                    pixels = 0.5 * (lo[side] + hi[side]);
+                }
+                ivec2 offset = ivec2(round(pixels * omega));
+                ivec2 sq = side == 0 ? q + offset : q - offset;
+                bool inside = all(greaterThanEqual(sq, ivec2(0))) && all(lessThan(sq, size));
+                float sd = inside ? texelFetch(sceneDepth, sq, 0).r : 1.0;
+                if (s >= steps) {
+                    lo[side] = sd < 1.0 ? pixels : lo[side];
+                    hi[side] = sd < 1.0 ? hi[side] : pixels;
+                } else if (sd < 1.0) {
+                    lo[side] = pixels;
+                    hi[side] = -1.0;
+                } else if (hi[side] < 0.0) {
+                    hi[side] = pixels;
+                }
                 if (sd >= 1.0) {
-                    continue;
+                    continue;  // off screen or background: no occluder known
                 }
                 vec3 hitPos = WorldPos((vec2(sq) + 0.5) * pc.params.zw, sd);
                 vec3 delta = hitPos - p;
@@ -275,7 +318,9 @@ void main()
                 // behind it, in the hemisphere around the normal.
                 float sgn = side == 0 ? 1.0 : -1.0;
                 vec3 toEye = normalize(pc.eye.xyz - hitPos);
-                float thickness = max(pc.temporal.z, pixelSize * length(hitPos - pc.eye.xyz) / distanceToEye);
+                // < 0: a fraction of a tenth of the distance to the camera (auto radius).
+                float objectThickness = pc.temporal.z < 0.0 ? -0.1 * pc.temporal.z * distanceToEye : pc.temporal.z;
+                float thickness = max(objectThickness, pixelSize * length(hitPos - pc.eye.xyz) / distanceToEye);
                 vec3 back = hitPos - toEye * thickness;
                 float hf = clamp(sgn * acos(clamp(c, -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
                 float hb = clamp(sgn * acos(clamp(dot(normalize(back - p), v), -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
