@@ -19,6 +19,18 @@ void SubsurfaceBegin(inout vec3 baseColor, inout vec3 emissive, inout float meta
         return;
     }
     Material m = ShadingMaterial();
+    if (m.refraction.y != 0.0 && Feature(kFeatureSubsurface)) {
+        // Thin walled (a leaf): the subsurface lobe transmits only
+        // (SubsurfaceTransmission), it reflects nothing (standard_surface's
+        // translucent_bsdf).
+        baseColor = kShadingPass == 2u ? vec3(0.0) : baseColor * (1.0 - m.subsurface.w);
+        if (kShadingPass == 2u) {
+            emissive = vec3(0.0);
+            metallic = 0.0;
+            specularTint = vec3(0.0);
+        }
+        return;
+    }
     if (kShadingPass == 2u) {
         baseColor = m.subsurface.rgb * m.subsurface.w * (1.0 - clamp(metallic, 0.0, 1.0));
         emissive = vec3(0.0);

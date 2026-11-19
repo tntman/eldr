@@ -798,6 +798,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));
+    frame.subsurfaceBurley = delegate->GetRenderSetting<std::string>(t.subsurfaceProfile, "burley") != "gaussian";
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;
     const std::string tonemapper = delegate->GetRenderSetting<std::string>(t.tonemapper, "aces");
     frame.post.tonemapper = tonemapper == "agx"       ? Tonemapper::Agx

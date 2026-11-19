@@ -2298,6 +2298,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.holdouts = false;
     _gpu.subsurface.clear();
     _gpu.subsurfaceVariant.clear();
+    std::vector<uint8_t> scatters(slots);  // the subsurface pass draws the slot (and its levels)
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -2409,6 +2410,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         if (kind[slot] != Gpu::kTranslucent && mat && mat->Scatters()) {
             _gpu.subsurface.push_back(uint32_t(slot));
             _gpu.subsurfaceVariant.push_back(variant >> 2);
+            scatters[slot] = 1;
         }
         kind[slot] |= variant;
         d.primId = m.primId;
@@ -2509,6 +2511,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             if ((kind[slot] & (Gpu::kWide - 1)) == Gpu::kTints) {  // its levels shadow as tints too
                 _gpu.tintCasters.push_back(uint32_t(next));
                 _gpu.tintCasterVariant.push_back(kind[slot] >> 2);
+            }
+            if (scatters[slot]) {  // the subsurface pass draws its levels too
+                _gpu.subsurface.push_back(uint32_t(next));
+                _gpu.subsurfaceVariant.push_back(kind[slot] >> 2);
             }
             weight[next] = double(drawn[slot]) * double(lod.indexCount / 3);
             g.errors[k] = lod.error;
