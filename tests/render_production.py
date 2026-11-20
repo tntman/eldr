@@ -51,9 +51,8 @@ VIEWS = [
      "Two pyro simulations (OpenVDB density and temperature): dark smoke lit by the sun, fire glowing by "
      "temperature."),
     ("jungle", "Jungle Ruins: dense instanced foliage",
-     "About 170 million instanced triangles of plants around a pyramid, lit by the sky dome alone."),
-    ("jungle_close", "Jungle Ruins, closer",
-     "The same camera zoomed in 2.4 times onto the plants and stones."),
+     "About 170 million instanced triangles of plants around a pyramid, lit by the sky dome alone. Eldr runs out "
+     "of the GTX 1080 Ti's 11 GB on this scene, so only Karma's cards show."),
     ("crowd", "Crowd: 9,324 skinned agents",
      "9,324 UsdSkel agents (20.7 million triangles) skinned on the GPU, at 1280 x 720. Eldr only."),
 ]
@@ -170,7 +169,8 @@ def render(view, outdir, build, force):
             sec = sum(float(x["execute_ms"]) for x in rows) / 1000 if rows else karma_seconds(log)
             known[r] = dict(ok=os.path.exists(exr), wall=wall, sec=sec if sec is not None else wall,
                             mem=mem if plugin == "HdVkRendererPlugin" else None,
-                            limited="Run time %d exceeded" % KARMA_LIMIT in open(log, errors="replace").read())
+                            limited=os.path.exists(log) and
+                            "Run time %d exceeded" % KARMA_LIMIT in open(log, errors="replace").read())
             print("%-16s %-13s %s render %.1f s, wall %.1f s, %s MB" % (
                 view, r, "ok" if known[r]["ok"] else "FAILED (%d)" % code, known[r]["sec"], wall, mem), flush=True)
             json.dump(known, open(times, "w"))
