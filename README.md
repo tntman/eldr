@@ -1,5 +1,9 @@
 <div align="center">
 
+<p align="center">
+  <img src="docs/images/banner.gif" alt="Eldr: A Vulkan Hydra render delegate for OpenUSD, MaterialX and Houdini Solaris" width="100%">
+</p>
+
 <h1>Eldr</h1>
 
 <p><b>A GPU raster renderer for OpenUSD and MaterialX. Final VFX frames to EXR in seconds, with Karma as the look it aims for.</b></p>
@@ -633,3 +637,5 @@ Eldr builds on [OpenUSD](https://openusd.org) and its Hydra framework, [Material
 Eldr is licensed under the [Apache License 2.0](LICENSE).
 
 `third_party/nanovdb` holds NanoVDB's `PNanoVDB.h` from OpenVDB (MPL-2.0, unmodified). OpenUSD, Houdini, Vulkan, Intel OIDN and MaterialX keep their own licences.
+
+Banner rendered in Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) with the add-on packages by the Sponza Add-on Package Crew; CC BY 4.0. Rendered with Eldr by `docs/site/banner.py`.
