@@ -346,6 +346,10 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
                     if (n > 0 && size_t(n) < sizeof(text)) {
                         std::snprintf(text + n, sizeof(text) - size_t(n), ")");
                     }
+                    // Also said here: an app may hold the error its catcher
+                    // reports until after a crash that follows it.
+                    std::fprintf(stderr, "Eldr: %s\n", text);
+                    std::fflush(stderr);
                     throw OutOfMemory(text);
                 }
                 Check(r, "vkAllocateMemory");
