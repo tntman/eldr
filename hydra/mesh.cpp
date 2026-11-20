@@ -9,7 +9,6 @@
 
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec2f.h"
-#include "pxr/base/tf/getenv.h"  // TEMP lane 137
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/meshUtil.h"
 #include "pxr/imaging/hd/renderIndex.h"
@@ -20,7 +19,6 @@
 #include "pxr/imaging/pxOsd/tokens.h"
 
 #include <algorithm>
-#include <cstdio>  // TEMP lane 137
 #include <array>
 #include <optional>
 
@@ -774,22 +772,9 @@ VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const
     sceneDelegate->SamplePrimvar(id, HdTokens->points, open, close, &boxed);
     HdTimeSampleArray<VtVec3fArray, 4> samples;
     if (boxed.count < 2 || !samples.UnboxFrom(boxed)) {
-        if (TfGetenvBool("HDVK_DEBUG_DEFORM", false)) {  // TEMP lane 137
-            std::fprintf(stderr, "deform %s: %zu samples, shutter %g..%g
-", id.GetText(), boxed.count, open, close);
-        }
         return {};
     }
     const VtVec3fArray a = samples.Resample(open), b = samples.Resample(close);
-    if (static const bool debug = TfGetenvBool("HDVK_DEBUG_DEFORM", false); debug) {  // TEMP lane 137
-        float most = 0.0f;
-        for (size_t i = 0; a.size() == b.size() && i < a.size(); ++i) {
-            most = std::max(most, (b[i] - a[i]).GetLength());
-        }
-        std::fprintf(stderr, "deform %s: %zu samples [%g..%g] shutter %g..%g, %zu/%zu points, moves %g\n",
-                     id.GetText(), samples.count, samples.times[0], samples.times[samples.count - 1], open, close,
-                     a.size(), pointCount, most);
-    }
     if (a.size() != pointCount || b.size() != a.size() || a == b) {
         return {};
     }

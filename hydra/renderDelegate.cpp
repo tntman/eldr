@@ -1068,9 +1068,21 @@ bool HdVkRenderDelegate::SampledMotionShutter(float *open, float *close)
     if (!GetRenderSetting<bool>(HdVkRenderSettingsTokens->sampledMotion, true)) {
         return false;
     }
+    // Before a render pass names its camera (the first sync): the active
+    // render settings' camera (husk's), else the last camera synced with an
+    // open shutter. That one alone depends on sync order: Sponza's own
+    // cameras (shutter 0..216) shrank a knight's motion 400 times.
+    SdfPath settingsCamera;
+    if (const HdRenderSettings *settings = _activeKnown ? nullptr : ActiveRenderSettings()) {
+        for (const HdRenderSettings::RenderProduct &rp : settings->GetRenderProducts()) {
+            settingsCamera = settingsCamera.IsEmpty() ? rp.cameraPath : settingsCamera;
+        }
+    }
     std::lock_guard<std::mutex> lock(_shutterMutex);
     // A render pass without a scene camera (usdview's free camera): none.
-    const auto it = _shutters.find(_activeKnown ? _activeCamera : _lastOpenCamera);
+    const auto it = _shutters.find(_activeKnown                ? _activeCamera
+                                   : !settingsCamera.IsEmpty() ? settingsCamera
+                                                               : _lastOpenCamera);
     if (it == _shutters.end() || !(it->second[1] > it->second[0])) {
         return false;
     }
