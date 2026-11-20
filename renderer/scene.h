@@ -1155,6 +1155,7 @@ private:
     void _ReleaseGeometry(Mesh &mesh);
     // Meshes synced since the last Commit whose arrays others share (ShareEarly).
     std::mutex _earlyMutex;
+    std::mutex _meshesMutex;  // AddMesh, RemoveMesh (parallel sync)
     std::mutex _uploadMutex;  // _UploadGeometry's pools, shared geometry and staging, _errors
     std::unordered_multimap<uint64_t, Mesh *> _early;
     std::vector<std::pair<int32_t, std::string>> _errors;  // TakeErrors

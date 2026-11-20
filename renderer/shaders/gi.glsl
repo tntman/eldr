@@ -134,8 +134,8 @@ vec3 GiProbePosition(uint probe, ivec3 c)
 // caller's fallback instead). Over the active ones: where the probes on
 // one side are inactive (behind a wall) the ones that see p still light it
 // fully, however small their trilinear share (room edges and corners).
-// gGiDome: the part of it straight from the dome (its light at p, occluded
-// as the probes see it).
+// gGiDome: the share of it straight from the dome (its light at p,
+// occluded as the probes see it).
 // Karma's Diffuse Limit (rt.gather.z, eldr:diffuseLimit; above 16:
 // unlimited) as a geometric series: each bounce keeps r of the light (the
 // hit's diffuse albedo), so L bounces hold E_L = D (1 - r^L) / (1 - r) of a
@@ -158,17 +158,16 @@ float GiGatherShare(float r)
     return limit > 16.0 ? 1.0 : limit < 1.5 ? 0.0 : (1.0 - pow(r, limit - 1.0)) / (1.0 - pow(r, limit));
 }
 
-vec3 gGiDome = vec3(0.0);
+float gGiDome = 0.0;
 
 // The probes' light `gi` (GiIrradiance's last) keeping `share` of what
 // bounced, beyond the dome's direct light: `dome` (unoccluded) as occluded
 // as gGiDome says (unoccluded, it would light every bounce in a room with
 // the whole sky).
+// ponytail: the dome's share takes gi's colour (one channel per probe texel).
 vec3 GiLimit(vec3 gi, vec3 dome, float share)
 {
-    const vec3 kLuminance = vec3(0.2126, 0.7152, 0.0722);
-    float open = dot(dome, kLuminance);
-    vec3 direct = min(gi, dome * (open > 1e-8 ? clamp(dot(gGiDome, kLuminance) / open, 0.0, 1.0) : 0.0));
+    vec3 direct = min(gi * gGiDome, dome);
     return direct + share * (gi - direct);
 }
 
@@ -187,8 +186,8 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
     ivec3 base = clamp(ivec3(floor(grid)), ivec3(0), counts - 2);
     vec3 alpha = clamp(grid - vec3(base), 0.0, 1.0);
     vec2 irradianceSize = vec2(textureSize(giAtlas[0], 0)), visibilitySize = vec2(textureSize(giAtlas[1], 0));
-    vec3 sum = vec3(0.0), dome = vec3(0.0);
-    float weights = 0.0, shares = 0.0;
+    vec3 sum = vec3(0.0);
+    float weights = 0.0, shares = 0.0, dome = 0.0;
     for (int i = 0; i < 8; ++i) {
         ivec3 offset = ivec3(i, i >> 1, i >> 2) & 1;
         ivec3 c = base + offset;
@@ -220,13 +219,13 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
         float share = trilinear.x * trilinear.y * trilinear.z * probeInfo.w;
         w *= share;
         sum += irradiance.rgb * w;
-        dome += irradiance.rgb * (irradiance.a * w);
+        dome += irradiance.a * w;
         weights += w;
         shares += share;
     }
     // Probes the visibility test rejects keep under ~0.005 each after the
     // crush; a probe that sees p keeps over ~0.2 (times its share).
-    gGiDome = weights > 1e-8 ? dome / weights : vec3(0.0);
+    gGiDome = weights > 1e-8 ? dome / weights : 0.0;
     return weights > 1e-8 ? vec4(sum / weights, smoothstep(0.05, 0.15, weights / shares)) : vec4(0.0);
 }
 

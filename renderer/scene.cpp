@@ -666,8 +666,11 @@ std::vector<Scene::Emitter> Scene::_FindEmitters()
     return found;
 }
 
+// Meshes come and go while Hydra syncs meshes in parallel (a mesh's
+// GeomSubsets: HdVkMesh::_SplitSubsets): _meshes under _meshesMutex.
 Mesh *Scene::AddMesh()
 {
+    std::lock_guard<std::mutex> meshes(_meshesMutex);
     _changed = true;
     _meshes.push_back(std::make_unique<Mesh>());
     _meshes.back()->_slot = _meshes.size() - 1;
@@ -706,6 +709,7 @@ void Scene::ShareEarly(Mesh &mesh)
 
 void Scene::RemoveMesh(Mesh *mesh)
 {
+    std::lock_guard<std::mutex> meshes(_meshesMutex);
     _changed = true;
     // Only bookkeeping here; the freed instance slots are invalidated on the
     // GPU at the next Commit.
