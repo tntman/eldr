@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    doc = """Sponza atrium, wide: the courtyard from its west end with the curtains, ivy and cypress
+in daylight. Sun-lit floor and walls, bounced light in the arcades. Camera: Sponza's
+PhysCamera001 (without its exposure)."""
+    metersPerUnit = 0.01
+    upAxis = "Z"
+    subLayers = [@settings.usda@, @sponza_day.usda@]
+)
+
+def Camera "cam"
+{
+    float2 clippingRange = (1, 100000)
+    float focalLength = 25.104246
+    float horizontalAperture = 50
+    float verticalAperture = 28.125
+    matrix4d xformOp:transform = ( (-0.18552, -0.982641, 0, 0), (-0.190941, 0.0360491, 0.980939, 0), (-0.963911, 0.181984, -0.194314, 0), (-880.743, 85.8258, 159.222, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}

@@ -192,7 +192,11 @@ vec3 ShadowTransmission(Material m, vec2 uv, float path)
 }
 
 // False where a cutout material has no surface (opacity under its threshold).
+// The opacity is read at the finest mip, as the traced passes read it: a
+// minified cutout's mips average its holes in (foliage cards a few pixels
+// wide fell under the threshold and vanished); the film's samples
+// antialias the edges instead.
 bool Present(Material m, vec2 uv)
 {
-    return m.emissive.w <= 0.0 || Fetch(m.tex[6], m.params.wwww, uv).r >= m.emissive.w;
+    return m.emissive.w <= 0.0 || FetchGrad(m.tex[6], m.params.wwww, uv, vec2(0.0), vec2(0.0)).r >= m.emissive.w;
 }
