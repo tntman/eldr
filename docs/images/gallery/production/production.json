@@ -193,24 +193,6 @@
    "ratio": null
   }
  },
- "jungle": {
-  "karma_xpu": {
-   "ok": true,
-   "wall": 594.0953853130341,
-   "sec": 482.13,
-   "mem": null,
-   "limited": false,
-   "ratio": 1.0417249023409179
-  },
-  "karma_cpu": {
-   "ok": true,
-   "wall": 523.5898253917694,
-   "sec": 471.53,
-   "mem": null,
-   "limited": false,
-   "ratio": null
-  }
- },
  "crowd": {
   "eldr_default": {
    "ok": true,

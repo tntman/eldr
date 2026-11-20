@@ -276,7 +276,7 @@ Displacement shaders move the surface and cast shadows. (`showcase/2026-10-30_18
 
 ## Production scenes
 
-Intel's Sponza with its curtains, ivy, cypress, candles, knight, flood and explosion add-ons, Jungle Ruins and a 9,000-agent crowd, rendered with husk at 960 × 540 (the crowd at 1280 × 720): ● **Eldr raster + SSGI**, every effect without ray tracing (`tests/scenes/cornell/eldr_default.usda`); ◆ **Eldr ray traced** (`tests/scenes/cornell/eldr_final.usda`); ▲ **Karma XPU** (256 path-traced samples) and ■ **Karma CPU** (128), both with 4 diffuse bounces and OIDN, stopped after 10 minutes (*time-limited* on the card). Karma CPU is the brightness reference. *Render* is the time in the renderer (Eldr: its render pass; Karma: its log's render time), *load* the rest of husk's run (startup, scene load and sync); *GPU* the memory Eldr's render took. The layers are in `tests/scenes/production`; `python tests/render_production.py` renders them again.
+Intel's Sponza with its curtains, ivy, cypress, candles, knight, flood and explosion add-ons and a 9,000-agent crowd, rendered with husk at 960 × 540 (the crowd at 1280 × 720): ● **Eldr raster + SSGI**, every effect without ray tracing (`tests/scenes/cornell/eldr_default.usda`); ◆ **Eldr ray traced** (`tests/scenes/cornell/eldr_final.usda`); ▲ **Karma XPU** (256 path-traced samples) and ■ **Karma CPU** (128), both with 4 diffuse bounces and OIDN, stopped after 10 minutes (*time-limited* on the card). Karma CPU is the brightness reference. *Render* is the time in the renderer (Eldr: its render pass; Karma: its log's render time), *load* the rest of husk's run (startup, scene load and sync); *GPU* the memory Eldr's render took. The layers are in `tests/scenes/production`; `python tests/render_production.py` renders them again.
 
 Hardware: AMD Ryzen 9 3950X 16C/32T, 48 GB, GTX 1080 Ti 11 GB driver 582.78 (no RT cores), Windows 11 Pro, Houdini 22.0.466.
 
@@ -316,16 +316,10 @@ Two pyro simulations (OpenVDB density and temperature): dark smoke lit by the su
 
 ![Explosion: volumes: Eldr raster + SSGI 18.8 s render; Eldr ray traced 39.2 s render; Karma XPU 76.9 s render; Karma CPU 247.6 s render](images/gallery/production/sponza_explosion.jpg)
 
-### Jungle Ruins: dense instanced foliage
-
-About 170 million instanced triangles of plants around a pyramid, lit by the sky dome alone. Eldr runs out of the GTX 1080 Ti's 11 GB on this scene, so only Karma's cards show.
-
-![Jungle Ruins: dense instanced foliage: Karma XPU 482.1 s render; Karma CPU 471.5 s render](images/gallery/production/jungle.jpg)
-
 ### Crowd: 9,324 skinned agents
 
 9,324 UsdSkel agents (20.7 million triangles) skinned on the GPU, at 1280 x 720. Eldr only.
 
 ![Crowd: 9,324 skinned agents: Eldr raster + SSGI 17.6 s render; Eldr ray traced 19.0 s render](images/gallery/production/crowd.jpg)
 
-*Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) and add-ons by the Sponza Add-on Package Crew (Katica Putica, Cristiano Siqueira, Timothy Heath, Justin Prazen, Sebastian Herholz, Bruce Cherniak, Anton Kaplanyan); Jungle Ruins (Cristiano Siqueira, Charlene Teets, Sebastian Herholz, Anton Sochenov, Anton Kaplanyan, Intel Sample Library, 2024). CC BY 4.0.*
+*Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) and add-ons by the Sponza Add-on Package Crew (Katica Putica, Cristiano Siqueira, Timothy Heath, Justin Prazen, Sebastian Herholz, Bruce Cherniak, Anton Kaplanyan). CC BY 4.0.*
