@@ -6,7 +6,7 @@ in the atrium, an animated camera and a final settings prim. render: husk with E
 build (ELDR_H22_BUILD, default build-h22) into ELDR_BANNER_TMP (default: a folder in the system
 temp); ELDR_BANNER_TEST=1 renders /Render/bannerTest (few samples), ELDR_BANNER_FRAMES="1 4 18"
 first, count and step. comp: tonemaps each linear EXR (ACES 2.0 SDR) and lays the title over it.
-gif: hffmpeg with a palette per GIF."""
+gif: banner.jpg (frame 1) and banner.gif with Pillow (12 fps, 960 wide)."""
 import math
 import os
 import pathlib
@@ -29,7 +29,7 @@ SPONZA_LAYERS = [  # strongest first
 LAYER = ROOT / "docs" / "site" / "banner_sponza.usda"
 OIIO = HFS / "bin" / "hoiiotool.exe"
 W, H, FRAMES, FPS = 1280, 480, 72, 24
-GIF_W = 960
+GIF_W, GIF_COLOURS, GIF_STEP = 960, 192, 2
 EXPOSURE = 1.3  # linear gain before the display transform
 SAMPLES, TEST_SAMPLES = 128, 16
 
@@ -370,13 +370,12 @@ def frames():
 def overlay():
     """The title over a dark band, as an RGBA image in display colours."""
     out = TMP / "overlay.exr"
-    # "El" in the accent, "dr" white at El's advance (123 px at size 150): the word's ink centres on 640.
-    # No shadow: oiiotool draws it in the complement colour, a light rim around the accent.
-    title = "--text:x=%d:y=168:size=150:font=segoeuib:color=%s"
+    # The word in a warm orange (#FF8A1F, display values). No shadow: oiiotool draws it in the
+    # complement colour, a light rim around the orange.
     run([OIIO, "--create", "%dx%d" % (W, H), 4,
          "--fill:top=0,0,0,0.45:bottom=0,0,0,0.6", "%dx120+0+0" % W,
          "--fill:top=0,0,0,0.6:bottom=0,0,0,0", "%dx160+0+120" % W,
-         title % (497, "1,0.36,0.12,1"), "El", title % (620, "1,1,1,1"), "dr",
+         "--text:x=640:y=168:size=150:xalign=center:font=segoeuib:color=1,0.541,0.122,1", "Eldr",
          "--text:x=640:y=224:size=28:xalign=center:font=segoeui:shadow=1:color=0.92,0.92,0.92,1",
          "A Vulkan Hydra render delegate for OpenUSD, MaterialX and Houdini Solaris", "-o", out])
     return out
@@ -394,9 +393,15 @@ def comp():
 def gif():
     images = ROOT / "docs" / "images"
     run([OIIO, TMP / "comp.0001.png", "-o:quality=88", images / "banner.jpg"])
-    run([HFS / "bin" / "hffmpeg.exe", "-y", "-loglevel", "error", "-framerate", FPS, "-i", TMP / "comp.%04d.png",
-         "-filter_complex", "scale=%d:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=full[p];"
-         "[b][p]paletteuse=dither=sierra2_4a" % GIF_W, "-loop", 0, images / "banner.gif"])
+    # Houdini's hffmpeg has no GIF encoder: Pillow writes it. Every GIF_STEP-th frame, each with its own
+    # octree palette and no dither: dithering noise and a shared palette (which loses the small saturated
+    # areas) both cost more than the GIF's size budget (~5 MB) allows.
+    from PIL import Image
+    frames = [Image.open(TMP / ("comp.%04d.png" % f)).convert("RGB") for f in range(1, FRAMES + 1, GIF_STEP)]
+    frames = [im.resize((GIF_W, round(GIF_W * im.height / im.width)), Image.LANCZOS) for im in frames]
+    frames = [im.quantize(GIF_COLOURS, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE) for im in frames]
+    frames[0].save(images / "banner.gif", save_all=True, append_images=frames[1:],
+                   duration=round(1000 * GIF_STEP / FPS), loop=0)
     print("banner.gif: %.2f MB" % ((images / "banner.gif").stat().st_size / 1e6))
 
 
