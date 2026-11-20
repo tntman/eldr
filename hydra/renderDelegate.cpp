@@ -596,6 +596,7 @@ void HdVkRenderDelegate::SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &ter
 HdRenderPassSharedPtr HdVkRenderDelegate::CreateRenderPass(
     HdRenderIndex *index, HdRprimCollection const &collection)
 {
+    _renderIndex = index;
     return std::make_shared<HdVkRenderPass>(index, collection, *_scene, _renderer.get());
 }
 
@@ -1135,6 +1136,11 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
         _loadSyncMs += _commitMs;
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk upload failed: %s", e.what());
+    }
+    // Meshes and textures left out for lack of GPU memory.
+    for (const auto &[primId, why] : _scene->TakeErrors()) {
+        const SdfPath path = primId >= 0 && _renderIndex ? _renderIndex->GetRprimPathFromPrimId(primId) : SdfPath();
+        TF_RUNTIME_ERROR("Eldr: %s%s", path.IsEmpty() ? "" : (path.GetString() + " ").c_str(), why.c_str());
     }
 }
 

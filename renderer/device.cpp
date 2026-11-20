@@ -328,8 +328,27 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
                 ai.allocationSize = req.size;
                 ai.memoryTypeIndex = i;
                 VkDeviceMemory memory = VK_NULL_HANDLE;
-                Check(vkAllocateMemory(device, &ai, nullptr, &memory), "vkAllocateMemory");
+                const VkResult r = vkAllocateMemory(device, &ai, nullptr, &memory);
                 const bool local = mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+                if (r == VK_ERROR_OUT_OF_DEVICE_MEMORY || r == VK_ERROR_OUT_OF_HOST_MEMORY) {
+                    const MemoryStats m = Memory();
+                    constexpr double kMB = 1024.0 * 1024.0;
+                    char text[320];
+                    int n = std::snprintf(text, sizeof(text),
+                                          "out of %s memory allocating %.1f MB (Eldr holds %.0f MB of GPU memory and "
+                                          "%.0f MB of system memory",
+                                          local ? "GPU" : "system", double(req.size) / kMB, double(m.deviceLocal) / kMB,
+                                          double(m.host) / kMB);
+                    if (m.heapSize > 0 && n > 0 && size_t(n) < sizeof(text)) {
+                        n += std::snprintf(text + n, sizeof(text) - size_t(n), "; the GPU has %.0f of %.0f MB in use",
+                                           double(m.heapUsage) / kMB, double(m.heapSize) / kMB);
+                    }
+                    if (n > 0 && size_t(n) < sizeof(text)) {
+                        std::snprintf(text + n, sizeof(text) - size_t(n), ")");
+                    }
+                    throw OutOfMemory(text);
+                }
+                Check(r, "vkAllocateMemory");
                 static bool told = false;
                 if ((preferred & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) && !told && std::getenv("HDVK_TIMING")) {
                     told = true;
@@ -366,8 +385,13 @@ void Device::Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage,
     Check(vkCreateBuffer(device, &ci, nullptr, &b.buffer), "vkCreateBuffer");
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(device, b.buffer, &req);
-    b.memory = Allocate(req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                        preferred);
+    try {
+        b.memory = Allocate(req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            preferred);
+    } catch (...) {
+        Destroy(b);  // empty: the next Reserve tries again
+        throw;
+    }
     Check(vkBindBufferMemory(device, b.buffer, b.memory, 0), "vkBindBufferMemory");
     Check(vkMapMemory(device, b.memory, 0, VK_WHOLE_SIZE, 0, &b.mapped), "vkMapMemory");
     b.size = size;
@@ -415,7 +439,12 @@ Buffer Device::CreateDeviceBuffer(VkDeviceSize bytes, VkBufferUsageFlags usage)
     Check(vkCreateBuffer(device, &ci, nullptr, &b.buffer), "vkCreateBuffer");
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(device, b.buffer, &req);
-    b.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    try {
+        b.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    } catch (...) {
+        Destroy(b);
+        throw;
+    }
     Check(vkBindBufferMemory(device, b.buffer, b.memory, 0), "vkBindBufferMemory");
     b.size = ci.size;
     return b;
@@ -459,7 +488,12 @@ Image Device::CreateImage(VkFormat format, uint32_t width, uint32_t height, uint
             const VkDeviceSize a = std::max<VkDeviceSize>(req.alignment, 1);
             req.size = (VkDeviceSize(double(req.size) * recycleGrowth) + a - 1) / a * a;
         }
-        img.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        try {
+            img.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        } catch (...) {
+            vkDestroyImage(device, img.image, nullptr);
+            throw;
+        }
     }
     Check(vkBindImageMemory(device, img.image, img.memory, 0), "vkBindImageMemory");
 

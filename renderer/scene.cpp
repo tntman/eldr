@@ -1807,11 +1807,26 @@ int32_t Scene::_TextureIndex(Texture *t, uint32_t wrap)
         return found->second;
     }
     // ponytail: textures past kMaxTextures fall back to constants.
-    if (_gpu.textures.size() >= kMaxTextures) {
+    if (_gpu.textures.size() >= kMaxTextures || t->_outOfMemory) {
         return -1;
     }
     if (!t->_view) {
-        _Upload(*t);
+        try {
+            _Upload(*t);
+        } catch (const OutOfMemory &e) {
+            // Left out (its material's constant instead), never tried again.
+            vkDestroyImageView(_device->device, t->_view, nullptr);
+            vkDestroyImage(_device->device, t->_image, nullptr);
+            _device->Free(t->_memory);
+            t->_view = VK_NULL_HANDLE;
+            t->_image = VK_NULL_HANDLE;
+            t->_memory = VK_NULL_HANDLE;
+            t->_outOfMemory = true;
+            std::lock_guard<std::mutex> lock(_uploadMutex);
+            _errors.push_back({-1, "a " + std::to_string(t->width) + " x " + std::to_string(t->height) +
+                                       " texture is left out: " + e.what()});
+            return -1;
+        }
     }
     const int32_t index = int32_t(_gpu.textures.size());
     _gpu.textures.push_back(t->_view);
@@ -2036,6 +2051,13 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             for (size_t i; (i = next++) < todo.size();) {
                 try {
                     _UploadGeometry(*todo[i]);
+                } catch (const OutOfMemory &e) {
+                    // Left out: the mesh draws nothing until it syncs again.
+                    Mesh &m = *todo[i];
+                    std::lock_guard<std::mutex> lock(_uploadMutex);
+                    _ReleaseGeometry(m);
+                    ++m._lodGeneration;  // levels still building don't fit
+                    _errors.push_back({m.primId, std::string("left out: ") + e.what()});
                 } catch (...) {
                     std::lock_guard<std::mutex> lock(failedMutex);
                     failed = failed ? failed : std::current_exception();
