@@ -9,8 +9,9 @@
 // interior texel it mirrors, so it stays that texel's copy (bilinear
 // filtering across the octahedral seams) without a second pass.
 // Irradiance: radiance weighted by the cosine to the texel's direction,
-// back-face hits skipped; a probe that sees mostly back faces is in or
-// behind a wall and turns inactive (alpha 0). Visibility: the mean hit
+// back-face hits skipped; alpha: the share of it (luminance) straight from
+// the dome, the rays that escaped. A probe that sees mostly back faces is
+// in or behind a wall and turns inactive (its offset texel's w: 0, else 1). Visibility: the mean hit
 // distance and its square, sharply weighted around the direction. Both
 // blend the rotated rays only; the fixed ones (kGiFixedRays, with
 // relocation) move the probe instead: out of a wall through its nearest
@@ -51,15 +52,22 @@ ivec2 Interior(ivec2 t)
 }
 
 // The probe's new offset from its fixed rays (hit distances from where it
-// is now; back faces stored as -0.2 times theirs).
-void Relocate(uint probe, uint fixedRays)
+// is now; back faces stored as -0.2 times theirs), and whether it is
+// usable (w): under a quarter of all its rays hit back faces.
+void Relocate(uint probe, uint fixedRays, uint count)
 {
     ivec2 at = ivec2(probe % rt.giCounts.w, probe / rt.giCounts.w);
+    vec4 old = imageLoad(giOffsets, at);
+    uint inside = 0u;
+    for (uint r = 0u; r < count; ++r) {
+        inside += rays[r].w < 0.0 ? 1u : 0u;
+    }
+    float usable = mix(float(inside) < 0.25 * float(count) ? 1.0 : 0.0, isnan(old.w) ? 0.0 : old.w, rt.giParams.x);
     if (fixedRays == 0u) {
-        imageStore(giOffsets, at, vec4(0.0));  // relocation off: back on the grid
+        imageStore(giOffsets, at, vec4(0.0, 0.0, 0.0, usable));  // relocation off: back on the grid
         return;
     }
-    vec3 offset = imageLoad(giOffsets, at).xyz;
+    vec3 offset = old.xyz;
     if (any(isnan(offset)) || any(isinf(offset))) {
         offset = vec3(0.0);
     }
@@ -105,7 +113,7 @@ void Relocate(uint probe, uint fixedRays)
     if (dot(cell, cell) < 0.45 * 0.45) {
         offset = moved;
     }
-    imageStore(giOffsets, at, vec4(offset, 0.0));
+    imageStore(giOffsets, at, vec4(offset, usable));
 }
 
 void main()
@@ -126,7 +134,7 @@ void main()
     bool irradiance = kTexels == kGiIrradianceTexels;
     uint fixedRays = min(uint(rt.giParams.w), count);
     if (irradiance && gl_LocalInvocationIndex == 0u) {
-        Relocate(probe, fixedRays);
+        Relocate(probe, fixedRays, count);
     }
 
     ivec2 texel = ivec2(gl_LocalInvocationID.xy);
@@ -138,12 +146,9 @@ void main()
     ivec2 coord = GiTile(probe, kTexels) + texel;
     float range = rt.giParams.z;
     vec4 sum = vec4(0.0);
-    uint backfaces = 0u;
+    vec3 dome = vec3(0.0);  // the escaped rays' part of sum
     for (uint r = 0u; r < count; ++r) {
         vec4 ray = rays[r];
-        if (irradiance && ray.w < 0.0) {
-            ++backfaces;  // classification: of every ray
-        }
         if (r < fixedRays) {
             continue;
         }
@@ -151,6 +156,7 @@ void main()
         if (irradiance) {
             if (ray.w >= 0.0) {
                 sum += vec4(ray.rgb * cosine, cosine);
+                dome += ray.w > 1e29 ? ray.rgb * cosine : vec3(0.0);  // rt_probes.rgen's misses: 1e30
             }
         } else {
             float w = pow(cosine, 50.0);
@@ -165,8 +171,10 @@ void main()
             old = vec4(0.0);
         }
         vec3 value = sum.w > 1e-6 ? sum.rgb / sum.w : old.rgb;
-        float usable = float(backfaces) < 0.25 * float(count) ? 1.0 : 0.0;
-        imageStore(giIrradiance, coord, mix(vec4(value, usable), old, hysteresis));
+        const vec3 kLuminance = vec3(0.2126, 0.7152, 0.0722);
+        float total = dot(sum.rgb, kLuminance);
+        float share = total > 1e-8 ? clamp(dot(dome, kLuminance) / total, 0.0, 1.0) : old.a;
+        imageStore(giIrradiance, coord, mix(vec4(value, share), old, hysteresis));
     } else {
         vec2 old = imageLoad(giVisibility, coord).rg;
         if (any(isnan(old)) || any(isinf(old))) {

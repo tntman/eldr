@@ -57,10 +57,11 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
 const uint kRtMaskSurfaces = 1u, kRtMaskTranslucent = 2u, kRtMaskShadow = 4u, kRtMaskCamera = 8u;
 
 // DDGI probe atlases (Majercik et al. 2019): per probe an octahedral tile
-// of irradiance / pi (rgb; a: 1 while the probe sees mostly front faces)
-// and of visibility (mean hit distance and its square, over
-// giParams.z), each with a one-texel border for bilinear filtering; and a
-// texel per probe of its relocation offset (xyz, world; gi_update.comp).
+// of irradiance / pi (rgb; a: its share straight from the dome) and of
+// visibility (mean hit distance and its square, over giParams.z), each
+// with a one-texel border for bilinear filtering; and a texel per probe of
+// its relocation offset (xyz, world) and w: 1 while it sees mostly front
+// faces (gi_update.comp).
 layout(set = 0, binding = 58) uniform sampler2D giAtlas[3];
 const int kGiIrradianceTexels = 6, kGiVisibilityTexels = 14;  // tile interiors
 // Rays per probe update with the same directions every frame (unrotated),
@@ -112,11 +113,17 @@ vec3 GiRayDirection(uint ray, uint rays)
                            : mat3(rt.giRotation) * SphericalFibonacci(ray - fixedRays, rays - fixedRays);
 }
 
-// The probe's position: its grid point `c` moved by its relocation.
+// The probe's position: its grid point `c` moved by its relocation; w: 1
+// while it is usable (not inside a wall).
+vec4 GiProbe(uint probe, ivec3 c)
+{
+    vec4 o = texelFetch(giAtlas[2], ivec2(probe % rt.giCounts.w, probe / rt.giCounts.w), 0);
+    return vec4(rt.giOrigin.xyz + vec3(c) * rt.giOrigin.w + o.xyz, o.w);
+}
+
 vec3 GiProbePosition(uint probe, ivec3 c)
 {
-    ivec2 at = ivec2(probe % rt.giCounts.w, probe / rt.giCounts.w);
-    return rt.giOrigin.xyz + vec3(c) * rt.giOrigin.w + texelFetch(giAtlas[2], at, 0).xyz;
+    return GiProbe(probe, c).xyz;
 }
 
 // Irradiance / pi at p with normal n, seen from direction v, from the eight
@@ -127,6 +134,8 @@ vec3 GiProbePosition(uint probe, ivec3 c)
 // caller's fallback instead). Over the active ones: where the probes on
 // one side are inactive (behind a wall) the ones that see p still light it
 // fully, however small their trilinear share (room edges and corners).
+// gGiDome: the part of it straight from the dome (its light at p, occluded
+// as the probes see it).
 // Karma's Diffuse Limit (rt.gather.z, eldr:diffuseLimit; above 16:
 // unlimited) as a geometric series: each bounce keeps r of the light (the
 // hit's diffuse albedo), so L bounces hold E_L = D (1 - r^L) / (1 - r) of a
@@ -149,11 +158,17 @@ float GiGatherShare(float r)
     return limit > 16.0 ? 1.0 : limit < 1.5 ? 0.0 : (1.0 - pow(r, limit - 1.0)) / (1.0 - pow(r, limit));
 }
 
-// The probes' light `gi` keeping `share` of what bounced, beyond `dome`
-// (the dome's unoccluded light: what of gi is the dome's direct light).
+vec3 gGiDome = vec3(0.0);
+
+// The probes' light `gi` (GiIrradiance's last) keeping `share` of what
+// bounced, beyond the dome's direct light: `dome` (unoccluded) as occluded
+// as gGiDome says (unoccluded, it would light every bounce in a room with
+// the whole sky).
 vec3 GiLimit(vec3 gi, vec3 dome, float share)
 {
-    vec3 direct = min(gi, dome);
+    const vec3 kLuminance = vec3(0.2126, 0.7152, 0.0722);
+    float open = dot(dome, kLuminance);
+    vec3 direct = min(gi, dome * (open > 1e-8 ? clamp(dot(gGiDome, kLuminance) / open, 0.0, 1.0) : 0.0));
     return direct + share * (gi - direct);
 }
 
@@ -172,13 +187,14 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
     ivec3 base = clamp(ivec3(floor(grid)), ivec3(0), counts - 2);
     vec3 alpha = clamp(grid - vec3(base), 0.0, 1.0);
     vec2 irradianceSize = vec2(textureSize(giAtlas[0], 0)), visibilitySize = vec2(textureSize(giAtlas[1], 0));
-    vec3 sum = vec3(0.0);
+    vec3 sum = vec3(0.0), dome = vec3(0.0);
     float weights = 0.0, shares = 0.0;
     for (int i = 0; i < 8; ++i) {
         ivec3 offset = ivec3(i, i >> 1, i >> 2) & 1;
         ivec3 c = base + offset;
         uint probe = uint(c.x + counts.x * (c.y + counts.y * c.z));
-        vec3 probePos = GiProbePosition(probe, c);
+        vec4 probeInfo = GiProbe(probe, c);
+        vec3 probePos = probeInfo.xyz;
         vec3 toProbe = normalize(probePos - p);
         float wrap = (dot(toProbe, n) + 1.0) * 0.5;
         float w = wrap * wrap + 0.2;
@@ -201,14 +217,16 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
         uv = (vec2(GiTile(probe, kGiIrradianceTexels)) + 1.0 +
               (OctEncode(n) * 0.5 + 0.5) * float(kGiIrradianceTexels)) / irradianceSize;
         vec4 irradiance = textureLod(giAtlas[0], uv, 0.0);
-        float share = trilinear.x * trilinear.y * trilinear.z * irradiance.a;
+        float share = trilinear.x * trilinear.y * trilinear.z * probeInfo.w;
         w *= share;
         sum += irradiance.rgb * w;
+        dome += irradiance.rgb * (irradiance.a * w);
         weights += w;
         shares += share;
     }
     // Probes the visibility test rejects keep under ~0.005 each after the
     // crush; a probe that sees p keeps over ~0.2 (times its share).
+    gGiDome = weights > 1e-8 ? dome / weights : vec3(0.0);
     return weights > 1e-8 ? vec4(sum / weights, smoothstep(0.05, 0.15, weights / shares)) : vec4(0.0);
 }
 
