@@ -35,6 +35,7 @@ void main()
     } else if ((hit.flags & kHitBackface) != 0u) {
         result = vec4(0.0, 0.0, 0.0, -0.2 * hit.t);
     } else {
+        gGiRole = 1u;
         result = vec4(VolumeThrough(origin, dir, hit.t, -1) *
                           ShadeHit(dir, uvec3(ray, probe, rt.params.x), (hit.flags & kHitEmitter) == 0u, false, false, true),
                       hit.t);

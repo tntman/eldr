@@ -10,12 +10,14 @@ import html as H
 import json
 import pathlib
 import re
+import subprocess
 import sys
 
-# (file, nav title, part) in reading order; README is about maintaining the docs.
+# (file, nav title, part) in reading order.
 DOCS = [
     ("index.md", "Home", "Eldr"),
     ("guide/getting-started.md", "Getting started", "User guide"),
+    ("guide/tutorial.md", "Tutorial: your first scene", "User guide"),
     ("guide/solaris.md", "Rendering in Solaris", "User guide"),
     ("guide/lights.md", "Lights", "User guide"),
     ("guide/materials.md", "Materials", "User guide"),
@@ -30,13 +32,17 @@ DOCS = [
     ("gallery.md", "Gallery", "User guide"),
     ("guide/showcase.md", "Showcase scenes", "User guide"),
     ("guide/troubleshooting.md", "Troubleshooting", "User guide"),
+    ("guide/faq.md", "FAQ", "User guide"),
     ("settings.md", "Settings reference", "Reference"),
     ("features.md", "How Eldr works", "Reference"),
     ("houdini.md", "Houdini", "Reference"),
+    ("environment.md", "Environment variables", "Reference"),
     ("materialx.md", "MaterialX coverage", "Reference"),
     ("comparison.md", "Eldr vs EEVEE and Unreal", "Reference"),
     ("goals.md", "Goals", "Reference"),
-    ("testing.md", "Testing", "Reference"),
+    ("developer.md", "Developer guide", "Developer"),
+    ("testing.md", "Testing", "Developer"),
+    ("README.md", "Writing the docs", "Developer"),
 ]
 MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".svg": "image/svg+xml"}
 CHIPS = {"[RT]": ("rt", "Needs ray tracing"), "[film]": ("film", "Still camera and finals"),
@@ -140,6 +146,16 @@ def settings_view(md, info):
                         "and what it costs.\n" % n, 1), n
 
 
+def stamp(src):
+    """'Built from <commit>, <date>' for the sidebar, so a reader can match the docs to a build; '' without git."""
+    try:
+        sha, date = subprocess.run(["git", "-C", str(src), "log", "-1", "--format=%h %cs"], capture_output=True,
+                                   text=True, check=True).stdout.split()
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return ""
+    return "<small>Built from %s, %s</small>" % (H.escape(sha), H.escape(date))
+
+
 def main(src, out):
     info = read_def(src.parent / "hydra" / "renderSettings.def")
     docs, count = [], 0
@@ -152,6 +168,7 @@ def main(src, out):
         docs.append({"id": pathlib.Path(f).stem, "title": t, "part": p, "md": md})
     data = json.dumps(docs, ensure_ascii=False).replace("</", "<\\/")
     page = (pathlib.Path(__file__).parent / "template.html").read_text(encoding="utf-8")
+    page = page.replace("<!--BUILT-->", stamp(src))
     out.write_text(page.replace("/*DOCS*/[]", data), encoding="utf-8")
     print(out, "%d chapters, %d settings, %.1f MB" % (len(docs), count, out.stat().st_size / 1e6))
 

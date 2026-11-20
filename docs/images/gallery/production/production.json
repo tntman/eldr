@@ -1,0 +1,232 @@
+{
+ "sponza_atrium": {
+  "eldr_default": {
+   "ok": true,
+   "wall": 93.93893122673035,
+   "sec": 35.242396,
+   "mem": 7720,
+   "ratio": 1.6381306505306004
+  },
+  "eldr_final": {
+   "ok": true,
+   "wall": 128.2726652622223,
+   "sec": 66.668671,
+   "mem": 9116,
+   "ratio": 1.2990181016478168
+  },
+  "karma_xpu": {
+   "ok": true,
+   "wall": 232.61687064170837,
+   "sec": 196.60999999999999,
+   "mem": null,
+   "limited": false,
+   "ratio": 1.0686895180149765
+  },
+  "karma_cpu": {
+   "ok": true,
+   "wall": 278.903648853302,
+   "sec": 250.88000000000002,
+   "mem": null,
+   "limited": false,
+   "ratio": null
+  }
+ },
+ "sponza_arcade": {
+  "eldr_default": {
+   "ok": true,
+   "wall": 81.95104432106018,
+   "sec": 24.259545000000003,
+   "mem": 7279,
+   "ratio": 1.978525761978467
+  },
+  "eldr_final": {
+   "ok": true,
+   "wall": 103.02344155311584,
+   "sec": 43.607252,
+   "mem": 8102,
+   "ratio": 1.6766620337234126
+  },
+  "karma_xpu": {
+   "ok": true,
+   "wall": 87.73225164413452,
+   "sec": 56.66,
+   "mem": null,
+   "limited": false,
+   "ratio": 1.0586132759537128
+  },
+  "karma_cpu": {
+   "ok": true,
+   "wall": 236.83709859848022,
+   "sec": 209.38,
+   "mem": null,
+   "limited": false,
+   "ratio": null
+  }
+ },
+ "sponza_candles": {
+  "eldr_default": {
+   "ok": true,
+   "wall": 1276.513445854187,
+   "sec": 1179.7859709999998,
+   "mem": 6671,
+   "ratio": 0.6735212597501384
+  },
+  "eldr_final": {
+   "ok": true,
+   "wall": 1192.1498608589172,
+   "sec": 1106.196619,
+   "mem": 8378,
+   "ratio": 0.6650688965597138
+  },
+  "karma_xpu": {
+   "ok": true,
+   "wall": 606.2769873142242,
+   "sec": 543.2700000000001,
+   "mem": null,
+   "limited": true,
+   "ratio": 1.1298944193386742
+  },
+  "karma_cpu": {
+   "ok": true,
+   "wall": 602.0630986690521,
+   "sec": 544.8700000000001,
+   "mem": null,
+   "limited": true,
+   "ratio": null
+  }
+ },
+ "sponza_knight": {
+  "eldr_default": {
+   "ok": true,
+   "wall": 103.08015823364258,
+   "sec": 23.531703,
+   "mem": 5361,
+   "limited": false,
+   "ratio": 1.5308089831903582
+  },
+  "eldr_final": {
+   "ok": true,
+   "wall": 99.96896171569824,
+   "sec": 33.650214,
+   "mem": 7722,
+   "limited": false,
+   "ratio": 1.1353148801135062
+  },
+  "karma_xpu": {
+   "ok": true,
+   "wall": 126.88208603858948,
+   "sec": 96.93,
+   "mem": null,
+   "limited": false,
+   "ratio": 1.0631138566295193
+  },
+  "karma_cpu": {
+   "ok": true,
+   "wall": 221.41112542152405,
+   "sec": 193.60999999999999,
+   "mem": null,
+   "limited": false,
+   "ratio": null
+  }
+ },
+ "sponza_flood": {
+  "eldr_default": {
+   "ok": true,
+   "wall": 76.57644891738892,
+   "sec": 26.196295999999997,
+   "mem": 6064,
+   "ratio": 1.6098128932990823
+  },
+  "eldr_final": {
+   "ok": true,
+   "wall": 106.73280715942383,
+   "sec": 61.782744,
+   "mem": 6780,
+   "ratio": 1.2070975784696283
+  },
+  "karma_xpu": {
+   "ok": true,
+   "wall": 92.38719987869263,
+   "sec": 73.85000000000001,
+   "mem": null,
+   "limited": false,
+   "ratio": 1.0508875344928168
+  },
+  "karma_cpu": {
+   "ok": true,
+   "wall": 274.18878984451294,
+   "sec": 258.63000000000005,
+   "mem": null,
+   "limited": false,
+   "ratio": null
+  }
+ },
+ "sponza_explosion": {
+  "eldr_default": {
+   "ok": true,
+   "wall": 59.39643359184265,
+   "sec": 18.795893,
+   "mem": 6245,
+   "ratio": 1.0885546951649958
+  },
+  "eldr_final": {
+   "ok": true,
+   "wall": 81.94347834587097,
+   "sec": 39.244796,
+   "mem": 6766,
+   "ratio": 0.8790500313154834
+  },
+  "karma_xpu": {
+   "ok": true,
+   "wall": 95.18292784690857,
+   "sec": 76.94,
+   "mem": null,
+   "limited": false,
+   "ratio": 0.36806892400168817
+  },
+  "karma_cpu": {
+   "ok": true,
+   "wall": 265.6483211517334,
+   "sec": 247.55999999999997,
+   "mem": null,
+   "limited": false,
+   "ratio": null
+  }
+ },
+ "jungle": {
+  "karma_xpu": {
+   "ok": true,
+   "wall": 594.0953853130341,
+   "sec": 482.13,
+   "mem": null,
+   "limited": false,
+   "ratio": 1.0417249023409179
+  },
+  "karma_cpu": {
+   "ok": true,
+   "wall": 523.5898253917694,
+   "sec": 471.53,
+   "mem": null,
+   "limited": false,
+   "ratio": null
+  }
+ },
+ "crowd": {
+  "eldr_default": {
+   "ok": true,
+   "wall": 39.00190734863281,
+   "sec": 17.556946,
+   "mem": 1380,
+   "limited": false,
+   "ratio": null
+  },
+  "eldr_final": {
+   "ok": true,
+   "wall": 30.197505235671997,
+   "sec": 18.962008,
+   "mem": 1692,
+   "limited": false,
+   "ratio": null
+  }
+ }
+}

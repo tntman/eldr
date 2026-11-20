@@ -2290,6 +2290,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.translucentVariant.clear();
     _gpu.translucentFlags.clear();
     _gpu.translucentCenters.clear();
+    _gpu.translucentExtents.clear();
     _gpu.tintCasters.clear();
     _gpu.tintCasterVariant.clear();
     _gpu.slotGeometry.resize(slots);
@@ -2297,6 +2298,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.holdouts = false;
     _gpu.subsurface.clear();
     _gpu.subsurfaceVariant.clear();
+    std::vector<uint8_t> scatters(slots);  // the subsurface pass draws the slot (and its levels)
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -2395,6 +2397,11 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 r2 += 0.25f * (m._worldMax[k] - m._worldMin[k]) * (m._worldMax[k] - m._worldMin[k]);
             }
             _gpu.translucentCenters.push_back(std::sqrt(r2));
+            for (int k = 0; k < 3; ++k) {
+                _gpu.translucentExtents.push_back(0.5f * (m._worldMax[k] - m._worldMin[k]));
+            }
+            _gpu.translucentExtents.push_back(
+                drawable && m._shape != 0 && m._instanceCount == 1 && !m.holdout && (m.rays & Mesh::kShadowRays) ? 1.0f : 0.0f);
         } else if (mat && mat->thinWalled && mat->subsurface > 0) {
             kind[slot] = Gpu::kTints;  // a leaf: its shadow lets its colour through
             _gpu.tintCasters.push_back(uint32_t(slot));
@@ -2403,6 +2410,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         if (kind[slot] != Gpu::kTranslucent && mat && mat->Scatters()) {
             _gpu.subsurface.push_back(uint32_t(slot));
             _gpu.subsurfaceVariant.push_back(variant >> 2);
+            scatters[slot] = 1;
         }
         kind[slot] |= variant;
         d.primId = m.primId;
@@ -2417,6 +2425,16 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;
         d.vertexColors = m._vertexColors ? 1u : 0u;
+        // displayColor per instance (an instancer's): 2 + its first float in
+        // primvarData, rgb per Instance::index; it wins over the mesh's own.
+        for (const Primvar &pv : m.primvars) {
+            if (pv.rate == Primvar::Rate::Instance && pv.components == 3 && pv.name == "displayColor" &&
+                pv.values.size() >= size_t(m._instanceCount) * 3) {
+                d.vertexColors = 2u + uint32_t(primvarData.size());
+                primvarData.insert(primvarData.end(), pv.values.begin(), pv.values.begin() + size_t(m._instanceCount) * 3);
+                break;
+            }
+        }
         d.jointCount = m._skinCount > 0 ? m.jointCount : 0;
         d.skinXforms = m._skinXformBase;
         d.jointBounds = m._boundsBase;
@@ -2493,6 +2511,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             if ((kind[slot] & (Gpu::kWide - 1)) == Gpu::kTints) {  // its levels shadow as tints too
                 _gpu.tintCasters.push_back(uint32_t(next));
                 _gpu.tintCasterVariant.push_back(kind[slot] >> 2);
+            }
+            if (scatters[slot]) {  // the subsurface pass draws its levels too
+                _gpu.subsurface.push_back(uint32_t(next));
+                _gpu.subsurfaceVariant.push_back(kind[slot] >> 2);
             }
             weight[next] = double(drawn[slot]) * double(lod.indexCount / 3);
             g.errors[k] = lod.error;

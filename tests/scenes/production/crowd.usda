@@ -1,0 +1,26 @@
+#usda 1.0
+(
+    doc = """A crowd of 9,324 skinned agents (UsdSkel, 20.7 million triangles, MaterialX standard_surface)
+from its wide camera at 1280 x 720, with the scene's own sun and dome. Eldr only; render it with
+HD_ENABLE_DEFERRED_SKINNING=1 so Hydra skins on the GPU. Needs
+E:/usd-testscenes/crowd_9k/crowd_9k_v001.usd (not in the repository)."""
+    subLayers = [
+        @settings.usda@,
+        @E:/usd-testscenes/crowd_9k/crowd_9k_v001.usd@
+    ]
+)
+
+over "Render"
+{
+    over "eldr_default"
+    {
+        rel camera = </cameras/wideCam>
+        uniform int2 resolution = (1280, 720)
+    }
+
+    over "eldr_final"
+    {
+        rel camera = </cameras/wideCam>
+        uniform int2 resolution = (1280, 720)
+    }
+}

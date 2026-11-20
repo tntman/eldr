@@ -29,6 +29,11 @@ struct Instance {
     uint linkMask;   // light linking: bit k = in the k-th linked category (Scene::_linkBits)
 };
 
+// The displayColor a surface reads: the instance's (DrawInfo::vertexColors
+// >= 2: rgb at primvarData[vertexColors - 2 + 3 * Instance::index]), the
+// vertices' or the mesh's. Needs primvarData (program.glsl, rt.rchit).
+#define DISPLAY_COLOR(d, index, vertexColor)                                                               ((d).vertexColors >= 2u ? vec3(primvarData[(d).vertexColors - 2u + 3u * uint(index)],                                                 primvarData[(d).vertexColors - 1u + 3u * uint(index)],                                                 primvarData[(d).vertexColors + 3u * uint(index)])                        : (d).vertexColors != 0u ? (vertexColor) : (d).color.rgb)
+
 mat4 InstanceTransform(Instance inst)
 {
     return transpose(mat4(inst.rows[0], inst.rows[1], inst.rows[2], vec4(0.0, 0.0, 0.0, 1.0)));
@@ -43,7 +48,7 @@ struct DrawInfo {
     uint visible;     // the rays that see it (kRays*), 0: not drawn
     uint skin;        // first SkinVertex, kFreeSlot if rigid
     uint vertexBase;  // the mesh's first vertex in the vertex pool
-    uint vertexColors;  // 1: per-vertex displayColor, else color
+    uint vertexColors;  // 1: per-vertex displayColor, >= 2: per instance (DISPLAY_COLOR), else color
     uint jointCount;
     uint skinXforms;       // first skinning transform
     uint jointBounds;      // first JointBounds (two vec4 each)
