@@ -78,6 +78,7 @@ struct FrameData {
     uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
     float tintCasters[2 * kSkyTintCasters][4];  // Frame::translucentSkyShadows: centre, slot; half extents
     uint32_t tintCasterInfo[4];                  // x: how many
+    float lightGrid[2][4];  // world light grid (lights.comp): min xyz, w cells per axis (0: off); max xyz
 };
 
 namespace {
@@ -208,10 +209,13 @@ VkSampler CreateMaterialSampler(VkDevice device, float anisotropy, uint32_t wrap
     return sampler;
 }
 
-// Light clusters (shaders/lights.glsl): 16 x 9 x 24, a count and up to
+// Light clusters (shaders/lights.glsl): 16 x 9 x 24 of the view, then
+// 16 x 16 x 16 of the scene's bounds (traced hits), a count and up to
 // kMaxClusterLights indices each.
 constexpr uint32_t kMaxClusterLights = 255;
-constexpr VkDeviceSize kClusterBytes = 16 * 9 * 24 * (kMaxClusterLights + 1) * sizeof(uint32_t);
+constexpr uint32_t kViewClusters = 16 * 9 * 24, kLightGridCells = 16;
+constexpr VkDeviceSize kClusterBytes =
+    (kViewClusters + kLightGridCells * kLightGridCells * kLightGridCells) * (kMaxClusterLights + 1) * sizeof(uint32_t);
 
 // Push constants of cull.comp; the vertex stages read only the first 64 bytes
 // (mat4 viewProj) of the same range.
@@ -826,7 +830,7 @@ void Renderer::_CreateDescriptors()
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
-        {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
+        {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting | kRt},  // kRt: rt_shade.glsl's light grid
         {15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting},
@@ -1456,23 +1460,32 @@ uint32_t Renderer::_ShadingSet(uint32_t features, bool lazy)
 // Frame::lazyPipelines: the variants of a shading set's passes the scene
 // draws with that aren't compiled yet, now (the opaque pass's variant 0
 // always). A material of a new kind costs a few pipelines' compile then.
-void Renderer::_EnsureShading(const Scene::Gpu &gpu, uint32_t set)
+// The variants the scene draws with, per pass (_CreatePipelines' wanted:
+// opaque, translucent, refraction back faces, OIT, subsurface).
+static void DrawnVariants(const Scene::Gpu &gpu, uint32_t variants, uint64_t wanted[5])
 {
     uint64_t opaque = 1, translucent = 0, subsurface = 0;
     for (size_t i = 0; i + 1 < gpu.drawChunks.size(); ++i) {
         if ((gpu.chunkKind[i] & (Scene::Gpu::kWide - 1)) != Scene::Gpu::kTranslucent) {
-            opaque |= 1ull << ((gpu.chunkKind[i] >> 2) & (kVariants - 1));
+            opaque |= 1ull << ((gpu.chunkKind[i] >> 2) & (variants - 1));
         }
     }
     for (uint8_t v : gpu.translucentVariant) {
-        translucent |= 1ull << (v & (kVariants - 1));
+        translucent |= 1ull << (v & (variants - 1));
     }
     for (uint8_t v : gpu.subsurfaceVariant) {
-        subsurface |= 1ull << (v & (kVariants - 1));
+        subsurface |= 1ull << (v & (variants - 1));
     }
+    const uint64_t w[5] = {opaque, translucent, translucent, translucent, subsurface};
+    std::copy(w, w + 5, wanted);
+}
+
+void Renderer::_EnsureShading(const Scene::Gpu &gpu, uint32_t set)
+{
     const ShadingTargets t = _SetTargets(set);
     const VkPipeline *const passes[5] = {t.opaque, t.translucent, t.refractBack, t.oit, t.subsurface};
-    uint64_t wanted[5] = {opaque, translucent, translucent, translucent, subsurface};
+    uint64_t wanted[5];
+    DrawnVariants(gpu, kVariants, wanted);
     uint64_t any = 0;
     for (int p = 0; p < 5; ++p) {
         for (uint32_t v = 0; v < kVariants; ++v) {
@@ -1495,32 +1508,41 @@ void Renderer::_EnsureShading(const Scene::Gpu &gpu, uint32_t set)
     }
 }
 
-// Frame::pipelinePrewarm: queues the shading sets of `features` with one
+// Frame::pipelinePrewarm: queues the shading sets of `key` (the frame's
+// _ShadingSet key: its light splits' and crossfade bits stay) with one
 // optional feature toggled that this scene can use, and starts the worker.
+// With motion blur time samples (`timeSamples`) the set without them (or
+// with) first: every edit's TAA frames draw without them, the film with.
 // ponytail: single toggles, then pairs of gi/ssgi/fog/refraction/translucent
 // shadows; other pairs wait for the second's set, which the frame after the
 // first queues.
-void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
+void Renderer::_Prewarm(uint32_t key, const Scene::Gpu &gpu, bool save, bool timeSamples)
 {
     _MergePrewarmCache();
-    if (features == _prewarmFor) {
+    if (key == _prewarmFor) {
         return;
     }
-    _prewarmFor = features;
+    _prewarmFor = key;
+    const uint32_t features = key;
     // Settings switch these on; scene-made ones (refraction, translucent
     // shadows, subsurface, holdouts) only off, below. GI and SSGI first.
-    uint32_t toggles = kFeatureSsgi | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | features;
+    uint32_t toggles =
+        kFeatureSsgi | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | (features & kOptionalFeatures);
     toggles |= _rt && _rt->Wanted() ? kFeatureGi | kFeatureRtShadows | kFeatureRtReflections : 0;  // once ray tracing is on
     toggles |= gpu.shadowLight != kNone && gpu.shadowAngle > 0 ? kFeatureSoftSun : 0;
-    // What to flip: GI, SSGI and both (often turned on together) first.
+    toggles |= timeSamples ? kFeatureTimeSample : 0;
+    // What to flip: time samples, then GI, SSGI and both (often turned on together).
     std::vector<uint32_t> order;
+    if (toggles & kFeatureTimeSample) {
+        order.push_back(kFeatureTimeSample);
+    }
     for (uint32_t bits : {kFeatureGi, kFeatureSsgi, kFeatureGi | kFeatureSsgi}) {
         if ((toggles & bits) == bits) {
             order.push_back(bits);
         }
     }
     for (uint32_t bit = 1; bit; bit <<= 1) {
-        if ((toggles & bit) && bit != kFeatureGi && bit != kFeatureSsgi) {
+        if ((toggles & bit) && bit != kFeatureGi && bit != kFeatureSsgi && bit != kFeatureTimeSample) {
             order.push_back(bit);
         }
     }
@@ -1548,7 +1570,9 @@ void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
                                std::any_of(_prewarmed.begin(), _prewarmed.end(),
                                            [&](const Prewarmed &p) { return p.job.features == next; });
             if (!known && _shadingSets.size() + _prewarmQueue.size() + _prewarmed.size() + 1 < kShadingSets) {
-                _prewarmQueue.push_back({next, _displacedPipelines});
+                PrewarmJob job{next, _displacedPipelines, {}};
+                DrawnVariants(gpu, kVariants, job.wanted);  // a whole set was 320 pipelines (crowd: 22 s)
+                _prewarmQueue.push_back(job);
             }
         }
     }
@@ -1589,9 +1613,11 @@ void Renderer::_PrewarmWorker()
                                      base + 4 * kVariants};
         bool ok = true;
         try {
-            _CreatePipelines(false, p.job.features, &targets, _prewarmCache);
-            if (p.job.displaced) {
-                _CreatePipelines(true, p.job.features, &targets, _prewarmCache);
+            constexpr uint64_t kDisplacedBits = 0xffffffff00000000ull;  // variant bit 5, as _EnsureShading
+            _CreatePipelines(false, p.job.features, &targets, _prewarmCache, p.job.wanted);
+            if (p.job.displaced &&
+                std::any_of(p.job.wanted, p.job.wanted + 5, [](uint64_t w) { return (w & kDisplacedBits) != 0; })) {
+                _CreatePipelines(true, p.job.features, &targets, _prewarmCache, p.job.wanted);
             }
         } catch (const std::exception &) {
             ok = false;  // the frame that needs it compiles it (and reports why)
@@ -2342,8 +2368,12 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     // (all of them on 4096x4096 up to ~680 sphere lights at 64 texels); past
     // that the farthest or dimmest go unshadowed.
     uint32_t tileSize = std::clamp(frame.localShadowResolution, 64u, kShadowAtlasSize / 2);
+    // Frame::localShadowLights: past that many the dimmer ones stay
+    // unshadowed (thousands of lights drew the scene thousands of times a sample).
+    const size_t maxShadowed = std::max(frame.localShadowLights, 1u);
     uint32_t demand = 0;
-    for (size_t i = tileTraced ? 0 : std::min<size_t>(rtSlots, candidates.size()); i < candidates.size(); ++i) {
+    for (size_t i = tileTraced ? 0 : std::min<size_t>(rtSlots, candidates.size()), n = 0;
+         i < candidates.size() && n < maxShadowed; ++i, ++n) {
         demand += candidates[i].caster->coneAngle <= kSpotShadowCone ? 1 : 6;
     }
     const uint32_t sunCount = uint32_t(std::min<size_t>(suns.size(), kMaxSunTiles));
@@ -2366,7 +2396,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     uint32_t used = 0;
     auto place = [&](const Candidate &cand) {
         const uint32_t need = cand.caster->coneAngle <= kSpotShadowCone ? 1 : 6;
-        if (used + need <= capacity) {
+        if (used + need <= capacity && chosen.size() < maxShadowed) {
             chosen.push_back(cand);
             used += need;
         }
@@ -3158,7 +3188,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     static int renders = 0;
     char lapScope[32];
     std::snprintf(lapScope, sizeof lapScope, "frame %d", ++renders);
-    StartupLaps lap{renders <= 3 && std::getenv("HDVK_TIMING") != nullptr, lapScope, cpuStart};
+    StartupLaps lap{(renders <= 3 || TimingLevel() >= 3) && std::getenv("HDVK_TIMING") != nullptr, lapScope, cpuStart};
     _frameColor = _linearColor = VK_NULL_HANDLE;
     if (frame.width != _outWidth || frame.height != _outHeight) {
         _Resize(frame.width, frame.height);
@@ -4159,17 +4189,16 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // code (mesh.frag's kCompiledLightSplits); kFeatureLod (never optional)
     // the levels of detail crossfade's dither (mesh.frag).
     static_assert((kOptionalFeatures & (1u | kFeatureLod)) == 0, "the light splits' and crossfade's key bits");
-    const uint32_t shadingSet = _ShadingSet((fd.features[0] & kOptionalFeatures) | (splits || lightPath ? 1u : 0u) |
-                                                (fd.lodFade[0] > 0 ? kFeatureLod : 0),
-                                            frame.lazyPipelines);
+    const uint32_t shadingKey = (fd.features[0] & kOptionalFeatures) | (splits || lightPath ? 1u : 0u) |
+                                (fd.lodFade[0] > 0 ? kFeatureLod : 0);
+    const uint32_t shadingSet = _ShadingSet(shadingKey, frame.lazyPipelines);
     const auto shadingStart = std::chrono::steady_clock::now();
     _EnsureShading(gpu, shadingSet);  // a set made whole (not lazy, prewarmed) has them all
     _load.shadersMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadingStart).count();
     _shadingBase = shadingSet * kVariants;
     lap("shading pipelines", 5.0);
     if (frame.pipelinePrewarm) {
-        // ponytail: prewarms the sets without the light splits' bit only.
-        _Prewarm(fd.features[0] & kOptionalFeatures, gpu, frame.pipelineCache);
+        _Prewarm(shadingKey, gpu, frame.pipelineCache, shutterOn);
     }
     lap("prewarm", 5.0);
     _lastDrawCount = draw ? gpu.drawCount : 0;
@@ -4435,20 +4464,30 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         vkCmdPipelineBarrier2(_cmd, &dep);
         pass("cullShadows");
     }
-    if (localLights > 0 && frame.clusteredLights) {
+    // Ray-traced frames always: their hits (rt_shade.glsl) look lights up in
+    // a grid over the scene's bounds instead of walking every local light.
+    if ((localLights > 0 && frame.clusteredLights) || rayTracing) {
         // Light clusters, read by the shading pass.
         if (localLights > kMaxClusterLights && !_clusterWarned) {
             _clusterWarned = true;
-            std::fprintf(stderr, "Eldr: %u local lights; clusters reaching more than %u shade all of them (slower)\n",
+            std::fprintf(stderr, "Eldr: %u local lights; where more than %u reach a part of the view, the strongest of them light it\n",
                          unsigned(localLights), kMaxClusterLights);
         }
+        const bool grid = rayTracing;
+        for (int k = 0; k < 3; ++k) {
+            fd.lightGrid[0][k] = gpu.boundsMin[k];
+            fd.lightGrid[1][k] = gpu.boundsMax[k];
+        }
+        fd.lightGrid[0][3] = grid ? float(kLightGridCells) : 0.0f;
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _lightsPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
-        vkCmdDispatch(_cmd, (16 * 9 * 24 + 63) / 64, 1, 1);
+        const uint32_t cells = kViewClusters + (grid ? kLightGridCells * kLightGridCells * kLightGridCells : 0);
+        vkCmdDispatch(_cmd, (cells + 63) / 64, 1, 1);
         VkMemoryBarrier2 toShading{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         toShading.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         toShading.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
-        toShading.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        toShading.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                 (grid ? VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR : VK_PIPELINE_STAGE_2_NONE);
         toShading.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
         VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         dep.memoryBarrierCount = 1;

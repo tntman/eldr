@@ -337,7 +337,10 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
         }
     }
     uint traced = 0u;
-    for (uint i = frame.counts.x; i < frame.counts.x + frame.localLights.x; ++i) {
+    // The light grid's cell (lights.comp) lists the local lights that reach p.
+    uint gridBase = LightGridBase(p);
+    for (uint k = 0u; k < clusterLights[gridBase]; ++k) {
+        uint i = ClusterLight(gridBase, k);
         Light light = lights[i];
         vec3 toLight = light.position.xyz - p;
         float d2 = max(dot(toLight, toLight), 1e-12);
@@ -367,7 +370,8 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
         float theta = acos(clamp(cosLight, -1.0, 1.0));
         float cone = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
                                                          : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
-        vec3 e = light.color.rgb * LightTint(light, p) * (formFactor * window * window * cone * EmitterClamp(light, albedo));
+        vec3 e = light.color.rgb * LightTint(light, p) *
+                 (formFactor * window * window * cone * EmitterClamp(light, albedo) * ClusterLightScale(gridBase, k));
         vec3 w = e * light.halfHeight.w, lit = w * diffuse / PI;
         if (specular) {
             float size = type == kLightSphere ? light.axis.w : max(h, length(light.halfHeight.xyz));
