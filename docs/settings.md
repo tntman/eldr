@@ -330,7 +330,7 @@ Fog is height fog set only here (USD has no fog schema). Volumes are OpenVDB `Us
 | Fog Max Distance<br>`eldr:fogMaxDistance` | float 0 | How far from the camera the fog grid reaches, in scene units. Shorter: finer fog detail near the camera. 0: to the far end of the scene. | |
 | Fog Grid Size<br>`eldr:fogGridSize` | int 160 | Fog grid cells across the image (16-512), with 64 slices in depth. Higher: finer shafts and edges, slower. | 64: 0.06 ms; 256: 0.41 ms |
 | Fog Height along Z<br>`eldr:fogZUp` | off | Measures fog height along Z instead of Y, for Z-up scenes. | |
-| Fog Film Jitter<br>`eldr:fogFilmJitter` | on | Samples the fog at a random point in each grid cell per sample, so the finished fog is smooth instead of blocky. [film] | 64 samples: RMSE 0.0014 to 0.00022 |
+| Fog Film Jitter<br>`eldr:fogFilmJitter` | on | Samples the fog at a random point in each grid cell and shifts the grid by part of a cell each sample, so the finished fog, even a narrow spot's beam, is smooth instead of blocky. [film] | 64 samples: RMSE 0.0014 to 0.00022 |
 | Volume Step Size<br>`eldr:volumeStepSize` | float 1 | Distance between volume samples along a ray, in voxels. Larger: faster but coarser; smaller: finer detail in thin wisps. | |
 | Volume Max Steps<br>`eldr:volumeMaxSteps` | int 256 | The most samples a ray takes through one volume box. Raise it if large volumes get cut off. | |
 | Volume Shadow Steps<br>`eldr:volumeShadowSteps` | int 8 | Steps towards the light for each volume sample's shadow. More: more accurate self-shadowing, slower; Volume Quality multiplies it. | volume.usda 21 ms at 8, about 17 at 4, about 11 at 1 |
