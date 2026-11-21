@@ -300,7 +300,7 @@ void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const fl
     tile %= _scale * _scale;
     params.screen[2] = float((tile & 1u) | ((tile >> 1u) & 2u));
     params.screen[3] = float(((tile >> 1u) & 1u) | ((tile >> 2u) & 2u));
-    _Draw(cmd, objectThickness > 0.0f ? _ssgiBitmaskPipeline : _ssgiPipeline, _ssgiSet, _ssgiRaw, (_width + _scale - 1) / _scale, (_height + _scale - 1) / _scale,
+    _Draw(cmd, objectThickness != 0.0f ? _ssgiBitmaskPipeline : _ssgiPipeline, _ssgiSet, _ssgiRaw, (_width + _scale - 1) / _scale, (_height + _scale - 1) / _scale,
           &params);
     _Draw(cmd, _ssgiDenoisePipeline, _ssgiSet, _ssgi[_current], _width, _height, &params);
 }

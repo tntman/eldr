@@ -235,10 +235,9 @@ vec3 DomeDiffuse(vec3 n)
 // bounce light, limited by eldr:indirectClamp; the emission is the
 // emitter's direct light, limited by eldr:directClamp (off by default):
 // through the indirect clamp of 10, emissive.usda's panel of 40 lit its
-// room by GI at a third of Karma's. rt.params.w's light is
-// shadowed by a ray; with `shadows` (eldr:rtHitShadows) every distant light
-// and the first kMaxHitShadows local lights reaching p are too, one ray
-// each, the rest unshadowed.
+// room by GI at a third of Karma's. Every distant light is shadowed by a
+// ray; with `shadows` (eldr:rtHitShadows) the first kMaxHitShadows local
+// lights reaching p are too, one ray each, the rest unshadowed.
 // `specular` (hits seen in reflections and through glass): the lights'
 // GGX highlights (widened by the light's size) and Fresnel: the dome's
 // reflection weighted by the split-sum GGX albedo (Karis' analytic fit),
@@ -325,7 +324,9 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
                 w += e * light.shaping.w;
                 lit += e * light.shaping.w * HitGgx(n, v, l, min(a + 0.5 * sin(light.axis.w), 1.0), f0);
             }
-            if (i == rt.params.w || (shadows && (uint(light.color.w) & 2u) != 0u)) {
+            // Every sun casts its shadow (a dome's extracted sun beside the
+            // scene's too: unshadowed, it lights interiors through their walls).
+            if (i == rt.params.w || (uint(light.color.w) & 2u) != 0u) {
                 if (pick) {
                     Reservoir(i, w, lit, u, total, picked, pickedWeight, pickedLight);
                     continue;

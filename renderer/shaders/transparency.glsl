@@ -525,8 +525,9 @@ vec3 TranslucentSkyTint(vec3 p, vec3 n)
 // are summed in location 0; location 3, the revealage, is multiplied by
 // 1 - coverage. Pure highlights (glass at opacity 0) keep a sliver of
 // coverage so they still count. Subsurface: the light in location 0, its
-// alpha the largest radius, location 1 the radii's proportions (10 bits
-// each) and bit 30, so the blur keeps materials apart.
+// alpha the largest radius (with Burley's profile: scattering distance),
+// location 1 the radii's proportions (10 bits each) and bit 30, so the
+// blur keeps materials apart.
 // Holdouts (frame.features.x & kFeatureHoldouts) write nothing but their
 // depth and ids: black with zero alpha in the opaque pass, no light in the
 // subsurface pass, and translucent ones leave what's behind them alone.
@@ -542,8 +543,18 @@ void PassOutput(vec3 color, float alpha)
         return;
     }
     if (kShadingPass == 2u) {
-        vec3 radius = inMaterial != kNoMaterial ? max(ShadingMaterial().subsurfaceRadius.xyz, vec3(1e-6))
-                                                : vec3(1.0);
+        vec3 radius = vec3(1.0);
+        if (inMaterial != kNoMaterial) {
+            Material m = ShadingMaterial();
+            radius = max(m.subsurfaceRadius.xyz, vec3(1e-6));
+            if ((frame.features.x & kFeatureBurley) != 0u) {
+                // Burley's distance d from the mean free path, by the
+                // surface albedo (Christensen and Burley 2015's fit).
+                vec3 a = clamp(m.subsurface.rgb, 0.0, 1.0);
+                vec3 d = abs(a - 0.8);
+                radius = max(radius / (1.85 - a + 7.0 * d * d * d), vec3(1e-6));
+            }
+        }
         float largest = max(radius.r, max(radius.g, radius.b));
         uvec3 q = uvec3(round(radius / largest * 1023.0));
         outColor = vec4(color, largest);

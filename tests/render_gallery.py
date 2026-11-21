@@ -519,6 +519,8 @@ def write_docs(rows):
           table(rows, lambda r: "[%s](#%s)" % (r["title"], slug(r["title"]))), ""] + [
           line.replace("%s", hw) if line.startswith("| Hardware") else line for line in METHODOLOGY]
     md += sections(rows, "images/gallery/")
+    from render_production import section  # the Production scenes section, last rendered by render_production.py
+    md += section()
     with open(os.path.join(REPO, "docs", "gallery.md"), "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(md))
     hero = ["![Material lobes: clearcoat, sheen, fuzz, thin film, anisotropic highlights, hair and toon shading]"

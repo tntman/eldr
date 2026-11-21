@@ -3261,6 +3261,11 @@ int main()
             Expect(on.At(34, 32, 0) < off.At(34, 32, 0), "subsurface: the lit side gives light up");
             Expect(std::abs(on.At(8, 32, 2) - off.At(8, 32, 2)) < 0.01f, "subsurface: far from edges nothing changes");
             frame = IdentityFrame();
+            frame.subsurfaceBurley = false;
+            const Image gaussian = Render(renderer, scene, frame);
+            Expect(gaussian.At(30, 32, 0) - off.At(30, 32, 0) > 0.02f, "subsurface Gaussian profile: light bleeds");
+            Expect(bleedR > gaussian.At(30, 32, 0) - off.At(30, 32, 0),
+                   "subsurface: Burley's profile reaches further than the Gaussian");
             frame.subsurfaceSamples = 1;
             Expect(MaxDifference(Render(renderer, scene, frame), off) < 0.01f, "Frame::subsurfaceSamples 1: no blur");
         }

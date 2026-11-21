@@ -324,8 +324,8 @@ public:
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.
         bool ssgi = false;
-        uint32_t ssgiSteps = 8;        // per direction and side (1..32)
-        float ssgiRadius = 1.0f;       // world units
+        uint32_t ssgiSteps = 16;       // per direction and side (1..32)
+        float ssgiRadius = 0.0f;       // world units; 0: across the whole screen (gtao.frag)
         uint32_t ssgiResolution = 2;   // traced at 1 / this (1, 2), denoised and upsampled
         // Emissive surfaces as lights: small meshes emitting at least the
         // threshold also light the scene as sphere lights (with shadows);
@@ -364,6 +364,9 @@ public:
         // (1..64), and the sun shining through their thin parts.
         bool subsurface = true;
         uint32_t subsurfaceSamples = 15;
+        // The blur's profile: Burley's normalized diffusion (as Karma's),
+        // else a Gaussian per channel.
+        bool subsurfaceBurley = true;
         // Holdouts (Mesh::holdout): black with zero alpha; off: drawn as
         // usual.
         bool holdouts = true;
@@ -582,7 +585,7 @@ public:
         // ssgiBitmaskThickness of ssgiRadius thick, light from the sectors nothing nearer hides,
         // weighted by how much the surface it comes from faces the pixel.
         bool ssgiBitmask = false;
-        float ssgiBitmaskThickness = 0.25f;  // the bitmask's object thickness, in ssgiRadius
+        float ssgiBitmaskThickness = 0.25f;  // the bitmask's object thickness, in ssgiRadius (0: in a tenth of the distance to the camera)
         // Back-face hits in SSR and SSGI (Blender 5.2's Backface option): a
         // ray that meets the visible surface from behind (it went behind an
         // object) takes its radiance times screenBackfaceScale (0: none,

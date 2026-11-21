@@ -1,0 +1,74 @@
+#usda 1.0
+(
+    doc = """Render settings of the production scenes (tests/scenes/production), one prim per gallery
+renderer, all on the camera /cam at 960 x 540:
+  eldr_default  every effect that runs without ray tracing (tests/scenes/cornell/eldr_default.usda)
+  eldr_final    ray traced (tests/scenes/cornell/eldr_final.usda)
+  karma_xpu     Karma XPU (husk -R BRAY_HdKarmaXPU), path traced, denoised
+  karma_cpu     Karma CPU (husk -R BRAY_HdKarma), path traced, denoised
+Each view layer sublayers this one and defines /cam."""
+)
+
+def Scope "Render"
+{
+    # The gallery's Eldr settings (tests/scenes/cornell): every effect without ray tracing, and ray traced.
+    def RenderSettings "eldr_default" (
+        prepend references = @../cornell/eldr_default.usda@</Render/Settings>
+    )
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
+    }
+
+    def RenderSettings "eldr_final" (
+        prepend references = @../cornell/eldr_final.usda@</Render/Settings>
+    )
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
+    }
+
+    # Karma: path traced, 4 diffuse bounces, OIDN. Samples keep Karma CPU under about 10 minutes
+    # per view at 960 x 540 on the gallery machine (32 threads).
+    def RenderSettings "karma_xpu"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
+        token karma:global:convergence_mode = "Path Traced"
+        int karma:global:pathtracedsamples = 256
+        float karma:object:diffuselimit = 4
+        string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"aovs\": [\"C\"]}]]"
+    }
+
+    def RenderSettings "karma_cpu"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
+        token karma:global:convergence_mode = "Path Traced"
+        int karma:global:pathtracedsamples = 128
+        float karma:object:diffuselimit = 4
+        string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"aovs\": [\"C\"]}]]"
+    }
+
+    def RenderProduct "Product"
+    {
+        token productName = "production.exr"
+        rel orderedVars = [</Render/Vars/color>]
+    }
+
+    def Scope "Vars"
+    {
+        def RenderVar "color"
+        {
+            uniform token dataType = "color4f"
+            uniform string sourceName = "C.*[LO]"
+            uniform token sourceType = "lpe"
+            string driver:parameters:aov:name = "C"
+            token driver:parameters:aov:format = "color4f"
+        }
+    }
+}

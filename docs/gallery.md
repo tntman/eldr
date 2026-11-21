@@ -278,3 +278,53 @@ Light bounces more than once inside smoke, set with Karma's Volume Limit. (`show
 Displacement shaders move the surface and cast shadows. (`showcase/2026-10-30_18_displacement`)
 
 ![Displacement shaders: Eldr default, Eldr final, Karma XPU, Karma CPU](images/gallery/features/displacement.jpg)
+
+## Production scenes
+
+Intel's Sponza with its curtains, ivy, cypress, candles, knight, flood and explosion add-ons and a 9,000-agent crowd, rendered with husk at 960 × 540 (the crowd at 1280 × 720): ● **Eldr raster + SSGI**, every effect without ray tracing (`tests/scenes/cornell/eldr_default.usda`); ◆ **Eldr ray traced** (`tests/scenes/cornell/eldr_final.usda`); ▲ **Karma XPU** (256 path-traced samples) and ■ **Karma CPU** (128), both with 4 diffuse bounces and OIDN, stopped after 10 minutes (*time-limited* on the card). Karma CPU is the brightness reference. *Render* is the time in the renderer (Eldr: its render pass; Karma: its log's render time), *load* the rest of husk's run (startup, scene load and sync); *GPU* the memory Eldr's render took. The layers are in `tests/scenes/production`; `python tests/render_production.py` renders them again.
+
+Hardware: AMD Ryzen 9 3950X 16C/32T, 48 GB, GTX 1080 Ti 11 GB driver 582.78 (no RT cores), Windows 11 Pro, Houdini 22.0.466.
+
+### Sponza atrium: sun, sky and bounced light
+
+The courtyard with the curtains, ivy and cypress add-ons: sun-lit stone, sky through the open roof and light bounced into the arcades (15 million triangles).
+
+![Sponza atrium: sun, sky and bounced light: Eldr raster + SSGI 35.2 s render; Eldr ray traced 66.7 s render; Karma XPU 196.6 s render; Karma CPU 250.9 s render](images/gallery/production/sponza_atrium.jpg)
+
+### Sponza arcade: GI through curtains
+
+The ground-floor arcade lit mostly by sunlight bounced off the courtyard floor and through the curtains.
+
+![Sponza arcade: GI through curtains: Eldr raster + SSGI 24.3 s render; Eldr ray traced 43.6 s render; Karma XPU 56.7 s render; Karma CPU 209.4 s render](images/gallery/production/sponza_arcade.jpg)
+
+### 10,000 candles: many lights
+
+Sponza at night lit by 10,000 small sphere lights, one per candle flame, and a faint sky.
+
+![10,000 candles: many lights: Eldr raster + SSGI 1179.8 s render; Eldr ray traced 1106.2 s render; Karma XPU 543.3 s render; Karma CPU 544.9 s render](images/gallery/production/sponza_candles.jpg)
+
+### Knight: animated mesh, motion blur
+
+The knight add-on mid-lunge: deforming meshes from point time samples, blurred over a 180 degree shutter.
+
+![Knight: animated mesh, motion blur: Eldr raster + SSGI 23.5 s render; Eldr ray traced 33.7 s render; Karma XPU 96.9 s render; Karma CPU 193.6 s render](images/gallery/production/sponza_knight.jpg)
+
+### Flood: water refraction
+
+A FLIP water mesh (1.2 million faces) pouring along the courtyard, in clear water refracting the floor.
+
+![Flood: water refraction: Eldr raster + SSGI 26.2 s render; Eldr ray traced 61.8 s render; Karma XPU 73.9 s render; Karma CPU 258.6 s render](images/gallery/production/sponza_flood.jpg)
+
+### Explosion: volumes
+
+Two pyro simulations (OpenVDB density and temperature): dark smoke lit by the sun, fire glowing by temperature.
+
+![Explosion: volumes: Eldr raster + SSGI 18.8 s render; Eldr ray traced 39.2 s render; Karma XPU 76.9 s render; Karma CPU 247.6 s render](images/gallery/production/sponza_explosion.jpg)
+
+### Crowd: 9,324 skinned agents
+
+9,324 UsdSkel agents (20.7 million triangles) skinned on the GPU, at 1280 x 720. Eldr only.
+
+![Crowd: 9,324 skinned agents: Eldr raster + SSGI 17.6 s render; Eldr ray traced 19.0 s render](images/gallery/production/crowd.jpg)
+
+*Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) and add-ons by the Sponza Add-on Package Crew (Katica Putica, Cristiano Siqueira, Timothy Heath, Justin Prazen, Sebastian Herholz, Bruce Cherniak, Anton Kaplanyan). CC BY 4.0.*

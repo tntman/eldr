@@ -1,0 +1,33 @@
+#usda 1.0
+(
+    doc = """Intel Jungle Ruins (Karma version, Z up, centimetres): a pyramid in a jungle, about 170
+million instanced triangles of plants (point instancers), UsdPreviewSurface materials with
+PNG, JPEG, EXR and TIFF textures, lit by its sky dome alone. The view is the scene's
+default camera (/root/Camera/Camera), shown to Karma's camera too. Needs
+E:/usd-testscenes/jungle_ruins/JungleRuins/USD."""
+    metersPerUnit = 0.01
+    upAxis = "Z"
+    subLayers = [
+        @settings.usda@,
+        @E:/usd-testscenes/jungle_ruins/JungleRuins/USD/JungleRuins_Karma.usda@
+    ]
+)
+
+over "Environment"
+{
+    over "domelight"
+    {
+        bool inputs:karma:light:renderlightgeo = 1
+    }
+}
+
+def Camera "cam"
+{
+    float2 clippingRange = (10, 2000000)
+    float focalLength = 0.5
+    float horizontalAperture = 0.6
+    float verticalAperture = 0.3375
+    double3 xformOp:translate = (57250, 76650, 138.5)
+    float3 xformOp:rotateXYZ = (89.32, 0, 38.73)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+}

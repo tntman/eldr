@@ -1,0 +1,163 @@
+#usda 1.0
+(
+    doc = """The explosion add-on: two pyro simulations (OpenVDB density and temperature, 2 cm voxels,
+frame 15 of 100) in the Sponza courtyard, from the package's Karma camera. The package's
+Karma Pyro Shader look is rebuilt as a MaterialX volume both renderers read: dark smoke
+scattering and absorbing by density, fire glowing orange by temperature. The VDBs are Y up
+in centimetres: turned to Z up here. Needs E:/usd-testscenes/sponza/main_sponza and
+pkg_g_explosion/vdb."""
+    metersPerUnit = 0.01
+    upAxis = "Z"
+    subLayers = [
+        @settings.usda@,
+        @sponza_lights.usda@,
+        @E:/usd-testscenes/sponza/main_sponza/NewSponza_Main_USD_Zup_003.usda@
+    ]
+)
+
+def Xform "explosion"
+{
+    float xformOp:rotateX = 90
+    uniform token[] xformOpOrder = ["xformOp:rotateX"]
+
+    def Volume "blast" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        float3[] extent = [(-73, -31, -478), (733, 648, 279)]
+        rel field:density = </explosion/blast/density>
+        rel field:temperature = </explosion/blast/temperature>
+        rel material:binding = </explosion/mtl/pyro>
+
+        def OpenVDBAsset "density"
+        {
+            asset filePath = @E:/usd-testscenes/sponza/pkg_g_explosion/vdb/explosion_v0007/explosion_v0007.0015.vdb@
+            token fieldName = "density"
+        }
+
+        def OpenVDBAsset "temperature"
+        {
+            asset filePath = @E:/usd-testscenes/sponza/pkg_g_explosion/vdb/explosion_v0007/explosion_v0007.0015.vdb@
+            token fieldName = "temperature"
+        }
+    }
+
+    def Volume "trails" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        float3[] extent = [(-426, 4, -605), (801, 450, 564)]
+        rel field:density = </explosion/trails/density>
+        rel field:temperature = </explosion/trails/temperature>
+        rel material:binding = </explosion/mtl/pyro>
+
+        def OpenVDBAsset "density"
+        {
+            asset filePath = @E:/usd-testscenes/sponza/pkg_g_explosion/vdb/trails_v0004/trails_v0004.0015.vdb@
+            token fieldName = "density"
+        }
+
+        def OpenVDBAsset "temperature"
+        {
+            asset filePath = @E:/usd-testscenes/sponza/pkg_g_explosion/vdb/trails_v0004/trails_v0004.0015.vdb@
+            token fieldName = "temperature"
+        }
+    }
+
+    def Scope "mtl"
+    {
+        # Per centimetre: the package's density scale 4 per half metre (its Houdini units).
+        def Material "pyro"
+        {
+            token outputs:mtlx:volume.connect = </explosion/mtl/pyro/volume.outputs:out>
+
+            def Shader "volume"
+            {
+                uniform token info:id = "ND_volume"
+                token inputs:vdf.connect = </explosion/mtl/pyro/vdf.outputs:out>
+                token inputs:edf.connect = </explosion/mtl/pyro/edf.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "vdf"
+            {
+                uniform token info:id = "ND_anisotropic_vdf"
+                vector3f inputs:absorption.connect = </explosion/mtl/pyro/absorption.outputs:out>
+                vector3f inputs:scattering.connect = </explosion/mtl/pyro/scattering.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "density"
+            {
+                uniform token info:id = "ND_geompropvalue_float"
+                string inputs:geomprop = "density"
+                float outputs:out
+            }
+
+            def Shader "thick"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </explosion/mtl/pyro/density.outputs:out>
+                float inputs:in2 = 0.08
+                float outputs:out
+            }
+
+            def Shader "absorption"
+            {
+                uniform token info:id = "ND_multiply_vector3FA"
+                vector3f inputs:in1 = (0.8, 0.83, 0.84)
+                float inputs:in2.connect = </explosion/mtl/pyro/thick.outputs:out>
+                vector3f outputs:out
+            }
+
+            def Shader "scattering"
+            {
+                uniform token info:id = "ND_multiply_vector3FA"
+                vector3f inputs:in1 = (0.2, 0.17, 0.16)
+                float inputs:in2.connect = </explosion/mtl/pyro/thick.outputs:out>
+                vector3f outputs:out
+            }
+
+            def Shader "temperature"
+            {
+                uniform token info:id = "ND_geompropvalue_float"
+                string inputs:geomprop = "temperature"
+                float outputs:out
+            }
+
+            def Shader "heat"
+            {
+                uniform token info:id = "ND_smoothstep_float"
+                float inputs:in.connect = </explosion/mtl/pyro/temperature.outputs:out>
+                float inputs:low = 0.2
+                float inputs:high = 5
+                float outputs:out
+            }
+
+            def Shader "edf"
+            {
+                uniform token info:id = "ND_uniform_edf"
+                color3f inputs:color.connect = </explosion/mtl/pyro/fire.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "fire"
+            {
+                uniform token info:id = "ND_multiply_color3FA"
+                color3f inputs:in1 = (0.1, 0.042, 0.01)
+                float inputs:in2.connect = </explosion/mtl/pyro/heat.outputs:out>
+                color3f outputs:out
+            }
+        }
+    }
+}
+
+def Camera "cam"
+{
+    float2 clippingRange = (1, 100000)
+    float focalLength = 50
+    float horizontalAperture = 118
+    float verticalAperture = 66.375
+    matrix4d xformOp:transform = ( (0.209524, -0.977804, 0, 0), (-0.193343, -0.0414295, 0.980256, 0), (-0.958498, -0.205387, -0.197732, 0), (-665.806, -54.8681, 158.859, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
