@@ -189,6 +189,25 @@ def eldr_times(log, csv):
     return max(sum(float(x["execute_ms"]) for x in rows) / 1000 - inside, 0.0), load
 
 
+def timed(cmd, log, csv, env, runner=run):
+    """Runs a husk command (its -o, then the scene, last) the way the gallery and the production scenes
+    time it: Eldr renders once first to warm its pipeline cache (shader compiles are a first-run cost; that
+    run's load is kept as cold). (runner's result, render s, load s, cold load s); render and load from the
+    renderer's own log (eldr_times, karma_times)."""
+    eldr = "HdVkRendererPlugin" in cmd
+    cold = None
+    if eldr:
+        o = cmd.index("-o")
+        warm = [csv[:-4] + "_cold" + ext for ext in (".exr", ".log", ".csv")]
+        run(cmd[:o + 1] + [warm[0]] + cmd[o + 2:], warm[1], dict(env, HDVK_TIMING_CSV=warm[2]))
+        cold = eldr_times(warm[1], warm[2])[1]
+        if os.path.exists(warm[0]):
+            os.remove(warm[0])
+    result = runner(cmd, log, dict(env, HDVK_TIMING_CSV=csv))
+    sec, load = eldr_times(log, csv) if eldr else karma_times(log)
+    return result, sec, load, cold
+
+
 def render(s, outdir, build, force, new):
     """{renderer: {exr, sec, wall, rt}} for one scene; a renderer without an image is left out. Renders
     only when `new` (else uses what earlier runs left)."""
@@ -224,14 +243,8 @@ def render(s, outdir, build, force, new):
             for f in (exr, csv):
                 if os.path.exists(f):
                     os.remove(f)
-            cmd = [HUSK, "-R", plugin, "-s", prim, "-f", "1", "-n", "1", "-V", "2", "-o", exr, scene]
-            cold = None
-            if r.startswith("eldr"):  # warms the pipeline cache: shader compiles are a first-run cost
-                warm = [os.path.join(d, r + "_cold" + ext) for ext in (".exr", ".log", ".csv")]
-                run(cmd[:-2] + [warm[0], scene], warm[1], dict(env, HDVK_TIMING_CSV=warm[2]))
-                cold = eldr_times(warm[1], warm[2])[1]
-            code, wall = run(cmd, log, dict(env, HDVK_TIMING_CSV=csv))
-            sec, load = eldr_times(log, csv) if r.startswith("eldr") else karma_times(log)
+            (code, wall), sec, load, cold = timed(
+                [HUSK, "-R", plugin, "-s", prim, "-f", "1", "-n", "1", "-V", "2", "-o", exr, scene], log, csv, env)
             rt = "HdVk rt pipeline" in open(log, errors="replace").read()
             known[r] = dict(ok=os.path.exists(exr), wall=wall, sec=sec if sec is not None else wall, load=load,
                             cold=cold, rt=rt)

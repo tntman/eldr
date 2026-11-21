@@ -8,14 +8,13 @@ The scenes' packages aren't in the repository: the layers sublayer them from E:/
 files are missing is skipped (and keeps its last results). Each view is one layer, rendered through husk with
 its /Render/<renderer> settings prim (tests/scenes/production/settings.usda). Renders land in outdir (default
 %TEMP%/eldr_production) and are reused unless --force.
-Times: Eldr's time in its render pass (HDVK_TIMING=2), Karma's render time from its log (husk -V2), and the
-rest of husk's wall clock (startup, scene load and sync) as load. Eldr's GPU memory is the peak nvidia-smi
+Times: render_gallery.timed, as the gallery: Eldr renders twice and times the second (warm pipeline cache);
+render and load from each renderer's own log. Eldr's GPU memory is the peak nvidia-smi
 reports during the render less what was in use before it. Brightness is the mean luminance against Karma
 CPU's (compare_renderers.stats). render_gallery.py appends section() to docs/gallery.md; this script
 splices it in by itself.
 """
 import argparse
-import csv as csvfile
 import json
 import os
 import re
@@ -28,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 from compare_renderers import HUSK, oiio, run, stats  # noqa: E402
-from render_gallery import CARD, COLOURS, GLYPH, duration, hexrgb, karma_seconds  # noqa: E402
+from render_gallery import CARD, COLOURS, GLYPH, duration, hardware, hexrgb, timed  # noqa: E402
 
 SCENES = os.path.join(HERE, "scenes", "production")
 IMAGES = os.path.join(REPO, "docs", "images", "gallery", "production")
@@ -66,8 +65,6 @@ RENDERERS = [
 ]
 LABEL = {r[0]: r[1] for r in RENDERERS}
 KARMA_LIMIT = 600  # seconds: husk --timelimit for Karma (its card says "time-limited" when it stops early)
-HARDWARE = ("AMD Ryzen 9 3950X 16C/32T, 48 GB, GTX 1080 Ti 11 GB driver 582.78 (no RT cores), Windows 11 Pro, "
-            "Houdini 22.0.466")
 CREDIT = ("Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) and add-ons by the Sponza Add-on "
           "Package Crew (Katica Putica, Cristiano Siqueira, Timothy Heath, Justin Prazen, Sebastian Herholz, Bruce "
           "Cherniak, Anton Kaplanyan). CC BY 4.0.")
@@ -152,23 +149,23 @@ def render(view, outdir, build, force):
                 if os.path.exists(f):
                     os.remove(f)
             for attempt in range(2):  # ponytail: one retry for an intermittent crash in Eldr's parallel mesh sync
-                code, wall, mem = husk([HUSK, "-R", plugin, "-s", "/Render/" + r, "-f", "1", "-n", "1", "-V", "2",
-                                        "-o", exr, layer] + ([] if plugin == "HdVkRendererPlugin" else
-                                                             ["--timelimit", str(KARMA_LIMIT)]),
-                                       log, dict(env, HDVK_TIMING_CSV=csv))
+                (code, wall, mem), sec, load, cold = timed(
+                    [HUSK, "-R", plugin, "-s", "/Render/" + r, "-f", "1", "-n", "1", "-V", "2"] +
+                    ([] if plugin == "HdVkRendererPlugin" else ["--timelimit", str(KARMA_LIMIT)]) + ["-o", exr, layer],
+                    log, csv, env, husk)
                 if os.path.exists(exr) or "Fatal error" not in open(log, errors="replace").read():
                     break
                 os.replace(log, log[:-4] + "_crash.log")
                 if os.path.exists(csv):
                     os.remove(csv)
-            rows = list(csvfile.DictReader(open(csv))) if os.path.exists(csv) else []
-            sec = sum(float(x["execute_ms"]) for x in rows) / 1000 if rows else karma_seconds(log)
-            known[r] = dict(ok=os.path.exists(exr), wall=wall, sec=sec if sec is not None else wall,
+            known[r] = dict(ok=os.path.exists(exr), wall=wall, sec=sec if sec is not None else wall, load=load,
+                            cold=cold,
                             mem=mem if plugin == "HdVkRendererPlugin" else None,
                             limited=os.path.exists(log) and
                             "Run time %d exceeded" % KARMA_LIMIT in open(log, errors="replace").read())
-            print("%-16s %-13s %s render %.1f s, wall %.1f s, %s MB" % (
-                view, r, "ok" if known[r]["ok"] else "FAILED (%d)" % code, known[r]["sec"], wall, mem), flush=True)
+            print("%-16s %-13s %s render %.1f s, load %s, cold %s, wall %.1f s, %s MB" % (
+                view, r, "ok" if known[r]["ok"] else "FAILED (%d)" % code, known[r]["sec"], load, cold, wall, mem),
+                flush=True)
             json.dump(known, open(times, "w"))
         if known.get(r, {}).get("ok"):
             out[r] = dict(known[r], exr=exr)
@@ -181,7 +178,8 @@ def info(x, r, layer):
     if x.get("limited"):
         spp = "≤ " + spp + ", time-limited"
     line1 = "%d × %d · %s · %s render · %s load" % (*resolution(layer), spp, duration(x["sec"]),
-                                                   duration(max(0, x["wall"] - x["sec"])))
+                                                   duration(x["load"] if x.get("load") is not None
+                                                            else max(0, x["wall"] - x["sec"])))
     line2 = "Brightness reference" if r == "karma_cpu" else (
         "Brightness %.2f× Karma CPU" % x["ratio"] if x.get("ratio") is not None else "")
     if x.get("mem"):
@@ -232,10 +230,11 @@ def section(results=None):
           "◆ **Eldr ray traced** (`tests/scenes/cornell/eldr_final.usda`); ▲ **Karma XPU** (256 path-traced "
           "samples) and ■ **Karma CPU** (128), both with 4 diffuse bounces and OIDN, stopped after 10 minutes "
           "(*time-limited* on the card). Karma CPU is the brightness "
-          "reference. *Render* is the time in the renderer (Eldr: its render pass; Karma: its log's render time), "
-          "*load* the rest of husk's run (startup, scene load and sync); *GPU* the memory Eldr's render took. "
+          "reference. *Render* and *load* come from each renderer's own log, as in the Methodology above: "
+          "Eldr's render passes less the loading in them, timed on a second run with a warm shader cache; "
+          "Karma's wall clock less load and update. *GPU* is the memory Eldr's render took. "
           "The layers are in `tests/scenes/production`; `python tests/render_production.py` renders them again.", "",
-          "Hardware: " + HARDWARE + ".", ""]
+          "Hardware: " + hardware(), ""]
     for view, heading, what in VIEWS:
         r = results.get(view)
         if not r:
