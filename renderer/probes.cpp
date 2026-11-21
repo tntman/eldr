@@ -83,6 +83,15 @@ Reflections::Reflections(Device &device)
 {
 }
 
+double Reflections::TakeShadersMs()
+{
+    double ms = _renderer ? _renderer->TakeLoadTimes().shadersMs : 0.0;
+    for (const std::unique_ptr<Renderer> &r : _planarRenderers) {
+        ms += r ? r->TakeLoadTimes().shadersMs : 0.0;
+    }
+    return ms;
+}
+
 Reflections::~Reflections()
 {
     vkDeviceWaitIdle(_dev.device);
