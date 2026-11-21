@@ -14,6 +14,8 @@
 // radius over its distance in the world.
 // Both skip taps of other materials (ids) and add blurred minus unblurred
 // light to the colour.
+// Traced (profile.z 1, with Burley's pass): where rt_subsurface.rgen walked
+// (binding 5's alpha), its light stands in for the blurred light.
 // ponytail: no normal-aware weights (no normal buffer here); the world
 // distance stops the light at depth jumps.
 
@@ -21,12 +23,13 @@ layout(set = 0, binding = 0) uniform sampler2D src;      // pass 0: the light, 1
 layout(set = 0, binding = 1) uniform sampler2D light;    // rgb: subsurface light, a: largest radius
 layout(set = 0, binding = 2) uniform isampler2D ids;     // radii's proportions (10 bits each), bit 30 set
 layout(set = 0, binding = 3) uniform sampler2D sceneDepth;
+layout(set = 0, binding = 5) uniform sampler2D traced;   // rt_subsurface.rgen's (the light while off)
 
 layout(push_constant) uniform BlurParams {
     mat4 invViewProj;
     vec4 params;  // direction (pixels), taps, pass
     vec4 splits;  // x: 1 moves the light in the light splits too, yz: direct, indirect intensity
-    vec4 profile;  // x: 1 Burley's, y: noise index
+    vec4 profile;  // x: 1 Burley's, y: noise index, z: 1 traced (binding 5)
 } pc;
 
 layout(set = 0, binding = 4, rgba16f) uniform image2DArray lightSplits;  // 0: direct, 1: indirect diffuse, 5, 6: of them the subsurface's
@@ -112,7 +115,10 @@ void main()
     vec3 sum = texelFetch(src, q, 0).rgb;
     vec3 weights = vec3(1.0);
     vec3 result;
-    if (pc.profile.x > 0.5) {
+    vec4 walk = pc.profile.z > 0.5 ? texelFetch(traced, q, 0) : vec4(0.0);
+    if (walk.a > 0.0) {
+        result = walk.rgb;
+    } else if (pc.profile.x > 0.5) {
         result = Burley(q, size, id, center, radius, p, taps);
     } else if (reach >= 1.0 && taps > 1) {
         float spacing = reach / (0.5 * float(taps - 1));
@@ -129,7 +135,7 @@ void main()
             weights += w;
         }
     }
-    if (pc.profile.x <= 0.5) {
+    if (pc.profile.x <= 0.5 && walk.a <= 0.0) {
         result = sum / weights;
     }
     if (vertical && pc.splits.x != 0.0) {

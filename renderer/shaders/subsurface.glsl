@@ -55,11 +55,25 @@ void SubsurfaceLayers()
 #endif
 }
 
-// Light from the shadow-casting sun through thin parts (ears, leaves) to
-// the side facing away from it: the distance it travelled inside, from
-// where the shadow map first saw the surface, is bracketed by comparing at
-// half, one, two and four times the largest radius, and attenuates each
-// channel by exp(-distance / radius). Thin walls let it through whole
+// Van de Hulst's single-scattering albedo for the multiple-scattering
+// albedo (the subsurface colour) A: a thick slab of it reflects A
+// (rt_subsurface.rgen's random walk).
+vec3 SubsurfaceAlbedo(vec3 A)
+{
+    A = clamp(A, 0.0, 0.999);
+    vec3 h = 4.09712 + 4.20863 * A - sqrt(9.59217 + 41.6808 * A + 17.7126 * A * A);
+    return 1.0 - h * h;
+}
+
+// Light from the shadow-casting sun through thin parts (ears, leaves) and
+// thick ones to the side facing away from it: the distance it travelled
+// inside, from where the shadow map first saw the surface, is bracketed
+// by comparing at 1/32 to 4 times the largest diffusion length L =
+// radius / sqrt(3 (1 - albedo)) (the radius the mean free path; skin's red
+// carries about 12 radii). Per channel it passes as diffusion through a
+// slab does: (1 - A^2) e^(-d / L), plus A^2 e^(-d / L - d / radius) for
+// what crosses before it spreads (a random walk gives within 30% of it
+// from half to four diffusion lengths, all at 0). Thin walls let it through whole
 // where the sun reaches their other side (other casters shadow it).
 // Added in the shading and the subsurface pass, so the blur spreads it.
 // ponytail: the sun only; local lights don't shine through.
@@ -76,7 +90,9 @@ vec3 SubsurfaceTransmission(vec3 p, vec3 n)
         return vec3(0.0);
     }
     vec3 radius = max(m.subsurfaceRadius.xyz, vec3(1e-6));
-    float largest = max(radius.r, max(radius.g, radius.b));
+    vec3 A = clamp(m.subsurface.rgb, 0.0, 1.0);
+    vec3 reach = radius * inversesqrt(3.0 * max(1.0 - SubsurfaceAlbedo(A), 1e-6));
+    float largest = max(reach.r, max(reach.g, reach.b));
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
     int c = 0;
     while (c < 4 && depth > frame.cascadeSplits[c]) {
@@ -93,7 +109,7 @@ vec3 SubsurfaceTransmission(vec3 p, vec3 n)
     float distance = 0.0, lit = 1.0;
     if (m.refraction.y == 0.0) {  // not thin walled
         distance = 8.0 * largest;
-        for (int k = 2; k >= -1; --k) {
+        for (int k = 2; k >= -5; --k) {
             float d = largest * exp2(float(k));
             if (texture(shadowMap, vec4(uv, float(c), ref - d * perUnit)) > 0.5) {
                 distance = d;
@@ -113,6 +129,9 @@ vec3 SubsurfaceTransmission(vec3 p, vec3 n)
         }
         lit /= 9.0;
     }
-    return m.subsurface.rgb * m.subsurface.w * light.color.rgb * light.halfHeight.w * back / PI * lit *
-           exp(-distance / radius);
+    if (m.refraction.y != 0.0) {
+        return m.subsurface.rgb * m.subsurface.w * light.color.rgb * light.halfHeight.w * back / PI * lit;
+    }
+    vec3 through = exp(-distance / reach) * (1.0 - A * A + A * A * exp(-distance / radius));
+    return m.subsurface.w * light.color.rgb * light.halfHeight.w * back / PI * through;
 }

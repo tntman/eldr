@@ -60,6 +60,7 @@ FINAL = [
     ("eldr:rtShadowLights", "int", 16),
     ("eldr:gi", "bool", True),
     ("eldr:rtShadows", "bool", True),
+    ("eldr:rtSubsurface", "bool", True),
     ("eldr:denoise", "bool", True),
     ("eldr:filmSamples", "int", 256),
 ]

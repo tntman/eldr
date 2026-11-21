@@ -317,7 +317,7 @@ static bool _RayTracingOn(TfToken const &key, VtValue const &value)
 {
     const auto &t = *HdVkRenderSettingsTokens;
     if (!(key == t.rtShadows || key == t.rtShadowsAuto || key == t.rtReflections || key == t.rtRefraction ||
-          key == t.gi || key == t.caustics)) {
+          key == t.rtSubsurface || key == t.gi || key == t.caustics)) {
         return false;
     }
     if (HdVkLegacyMode(key)) {

@@ -18,7 +18,7 @@ struct BlurParams {  // mirror of the push block in subsurface_blur.frag
     float invViewProj[16];
     float params[4];  // direction (pixels), taps, pass (0: horizontal, 1: vertical into the colour)
     float splits[4];  // x: 1 moves the same light in the light splits (binding 4), yz: light path intensities
-    float profile[4];  // x: 1 Burley's, y: noise index
+    float profile[4];  // x: 1 Burley's, y: noise index, z: 1 traced (binding 5)
 };
 
 VkImageSubresourceRange Color()
@@ -38,14 +38,15 @@ Subsurface::Subsurface(Device &device)
     Check(vkCreateSampler(d, &sci, nullptr, &_sampler), "vkCreateSampler");
 
     // 0: what the pass blurs (the light, then the horizontal pass's
-    // result), 1: the light, 2: ids, 3: depth, 4: the light splits.
-    VkDescriptorSetLayoutBinding bindings[5] = {};
-    for (uint32_t i = 0; i < 4; ++i) {
+    // result), 1: the light, 2: ids, 3: depth, 4: the light splits, 5: the
+    // traced subsurface light (the light while not traced).
+    VkDescriptorSetLayoutBinding bindings[6] = {};
+    for (uint32_t i = 0; i < 6; ++i) {
         bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
     }
-    bindings[4] = {4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    slci.bindingCount = 5;
+    slci.bindingCount = 6;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(BlurParams)};
@@ -98,7 +99,7 @@ void Subsurface::BeginLighting(VkCommandBuffer cmd)
                                VK_IMAGE_VIEW_TYPE_2D);
         _blurred = _dev.CreateImage(kLightFormat, _width, _height, 1, 1, kUsage, VK_IMAGE_ASPECT_COLOR_BIT,
                                     VK_IMAGE_VIEW_TYPE_2D);
-        const VkDescriptorPoolSize size[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8},
+        const VkDescriptorPoolSize size[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10},
                                               {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pci.maxSets = 2;
@@ -139,18 +140,24 @@ void Subsurface::BeginLighting(VkCommandBuffer cmd)
 
 void Subsurface::Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples,
                       VkImageView splits, bool moveSplits, float direct, float indirect, bool burley,
-                      uint32_t noise)
+                      uint32_t noise, VkImageView traced)
 {
-    // The splits may have been recreated since the sets were made.
+    // The splits (and the traced light) may have been recreated since the sets were made.
     const VkDescriptorImageInfo splitsInfo{VK_NULL_HANDLE, splits, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo tracedInfo = traced ? VkDescriptorImageInfo{_sampler, traced, VK_IMAGE_LAYOUT_GENERAL}
+                                                    : VkDescriptorImageInfo{_sampler, _light.view,
+                                                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     for (VkDescriptorSet set : _sets) {
-        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = set;
-        write.dstBinding = 4;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        write.pImageInfo = &splitsInfo;
-        vkUpdateDescriptorSets(_dev.device, 1, &write, 0, nullptr);
+        VkWriteDescriptorSet writes[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+        writes[0].dstSet = writes[1].dstSet = set;
+        writes[0].dstBinding = 4;
+        writes[1].dstBinding = 5;
+        writes[0].descriptorCount = writes[1].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &splitsInfo;
+        writes[1].pImageInfo = &tracedInfo;
+        vkUpdateDescriptorSets(_dev.device, 2, writes, 0, nullptr);
     }
     StorageBarrier(cmd);  // the shading pass's and the SSR's splits
     for (const Image *img : {&_light, &_id}) {
@@ -165,10 +172,11 @@ void Subsurface::Blur(VkCommandBuffer cmd, VkImageView color, const float invVie
     params.splits[0] = moveSplits ? 1.0f : 0.0f;
     params.splits[1] = direct;
     params.splits[2] = indirect;
-    if (burley) {  // one pass over a disc of twice the taps
+    if (burley || traced) {  // one pass over a disc of twice the taps
         params.params[2] *= 2.0f;
         params.params[3] = 1.0f;
         params.profile[0] = 1.0f;
+        params.profile[2] = traced ? 1.0f : 0.0f;
         params.profile[1] = float(noise % 1024u);
         DrawFullscreen(cmd, _vertical, _layout, _sets[0], color, _width, _height, true,
                        VK_SHADER_STAGE_FRAGMENT_BIT, &params, sizeof(params));

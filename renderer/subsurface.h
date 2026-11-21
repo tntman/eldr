@@ -46,9 +46,11 @@ public:
     // intensities (`direct`, `indirect`) the colour carries.
     // `burley`: Burley's profile over a disc of 2 * `samples` taps in one
     // pass, turned by `noise` (per frame); else a Gaussian per channel.
+    // `traced` (RayTracing::SubsurfaceView, GENERAL): where it has a walk's
+    // light, that light instead of the blur's (one pass, as Burley's).
     void Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples,
               VkImageView splits, bool moveSplits, float direct = 1.0f, float indirect = 1.0f,
-              bool burley = true, uint32_t noise = 0);
+              bool burley = true, uint32_t noise = 0, VkImageView traced = VK_NULL_HANDLE);
 
 private:
     void _Destroy();
