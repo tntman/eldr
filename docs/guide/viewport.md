@@ -20,6 +20,21 @@ Once the camera has been still for **Still Delay** (0.3 s), quality steps up ove
 
 > **Showcase:** open `showcase/2026-10-30_01_moving_camera/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `moving` (the defaults) vs `full`.
 
+## While you edit
+
+An edit (a new prim, a light, a material parameter, a setting) shows in the next frame; then the film starts over. Eldr compiles the shader variants your next edits will likely need in the background, so a setting change rarely waits for a compile.
+
+| Edit, 1280x720 viewport, default settings | Kitchen: first frame | crowd_9k: first frame |
+|---|---|---|
+| A render setting (exposure, a feature on or off) | 10 ms | 37 ms |
+| Add, move or change a light | 16-24 ms | 54-66 ms |
+| Add a prim, move it | 14-23 ms | 36-83 ms |
+| New material, bind it, change a shader input | 11-20 ms | 40-80 ms |
+| Hide or show a mesh | 10 ms | 38 ms |
+| Move everything (a transform above the whole scene) | 57 ms | 1.5 s |
+
+The film then takes about 67 frames to converge: 0.6 s on Kitchen, 3 s on crowd_9k. A new sphere light with a shadow map adds its shadow draws to every film sample (crowd_9k: 46 to 60 ms a frame).
+
 ## Choosing what the viewport renders
 
 > **Where in Houdini:** The viewport's **Display Options** (press D over the viewport) have an **Eldr** section for per-viewport settings. The camera menu at the top right picks a render settings prim; its Eldr tab then applies to the viewport.

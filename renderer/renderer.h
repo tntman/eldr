@@ -816,7 +816,7 @@ private:
         return {_pipeline + base, _translucentPipeline + base, _oitPipeline + base, _subsurfacePipeline + base,
                 _refractBackPipeline + base};
     }
-    void _Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save);
+    void _Prewarm(uint32_t key, const Scene::Gpu &gpu, bool save, bool timeSamples);
     void _PrewarmWorker();
     void _MergePrewarmCache();
     void _CreateConstantImages();
@@ -920,6 +920,7 @@ private:
     struct PrewarmJob {
         uint32_t features;
         bool displaced;  // with the displaced variants too
+        uint64_t wanted[5];  // the variants per pass (DrawnVariants)
     };
     struct Prewarmed {
         PrewarmJob job;
