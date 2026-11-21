@@ -1,6 +1,7 @@
 #include "device.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -348,8 +349,12 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
                     }
                     // Also said here: an app may hold the error its catcher
                     // reports until after a crash that follows it.
-                    std::fprintf(stderr, "Eldr: %s\n", text);
-                    std::fflush(stderr);
+                    // The first few: a scene that doesn't fit runs out once per texture.
+                    static std::atomic<int> said{0};
+                    if (const int n = said++; n < 8) {
+                        std::fprintf(stderr, "Eldr: %s%s\n", text, n == 7 ? " (further ones not shown here)" : "");
+                        std::fflush(stderr);
+                    }
                     throw OutOfMemory(text);
                 }
                 Check(r, "vkAllocateMemory");

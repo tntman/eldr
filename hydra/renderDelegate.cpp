@@ -1150,9 +1150,16 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
         TF_RUNTIME_ERROR("HdVk upload failed: %s", e.what());
     }
     // Meshes and textures left out for lack of GPU memory.
-    for (const auto &[primId, why] : _scene->TakeErrors()) {
+    const auto errors = _scene->TakeErrors();
+    constexpr size_t kShown = 20;  // a scene that doesn't fit leaves out thousands of textures
+    for (size_t i = 0; i < std::min(errors.size(), kShown); ++i) {
+        const auto &[primId, why] = errors[i];
         const SdfPath path = primId >= 0 && _renderIndex ? _renderIndex->GetRprimPathFromPrimId(primId) : SdfPath();
         TF_RUNTIME_ERROR("Eldr: %s%s", path.IsEmpty() ? "" : (path.GetString() + " ").c_str(), why.c_str());
+    }
+    if (errors.size() > kShown) {
+        TF_RUNTIME_ERROR("Eldr: %zu more meshes and textures left out for lack of GPU memory",
+                         errors.size() - kShown);
     }
 }
 
