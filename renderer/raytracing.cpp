@@ -1474,7 +1474,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
 }
 
 // Caustics' uniforms and photon buffer: a count, the hash grid's heads
-// (kPhotonCells, a cell twice the gather radius), then 8 words per photon
+// (kPhotonCells, shared by a fine and a coarse grid), then 9 words per photon
 // (caustics.glsl). Kept while big enough; freed with caustics off.
 void RayTracing::_PrepareCaustics(RayTracingData &d)
 {
@@ -1492,7 +1492,7 @@ void RayTracing::_PrepareCaustics(RayTracingData &d)
     const uint32_t capacity = perLight * lights;
     if (!_photons.buffer || capacity > _photonCapacity) {
         _dev.Destroy(_photons);
-        _photons = _dev.CreateDeviceBuffer((VkDeviceSize(4) + kPhotonCells + VkDeviceSize(capacity) * 8) * sizeof(uint32_t),
+        _photons = _dev.CreateDeviceBuffer((VkDeviceSize(4) + kPhotonCells + VkDeviceSize(capacity) * 9) * sizeof(uint32_t),
                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         _photonCapacity = capacity;
     }
@@ -1501,6 +1501,7 @@ void RayTracing::_PrepareCaustics(RayTracingData &d)
     d.caustics[0] = radius;
     d.caustics[1] = 2.0f * radius;
     d.caustics[2] = _work.causticSphere[3] + std::max(_work.sceneExtent, 0.0f);
+    d.caustics[3] = std::max(_work.causticRadiusFirst, radius);
     std::copy(_work.causticSphere, _work.causticSphere + 4, d.causticSphere);
     d.causticInfo[0] = perLight;
     d.causticInfo[1] = lights;

@@ -148,13 +148,14 @@ public:
         // aimed at the casters' bounding sphere (centre, radius) pass their
         // glass and metal (Scene's DrawInfo::caustics) and land on a
         // receiver, into a hash grid that mesh.frag gathers from within
-        // causticRadius (this sample's). sceneExtent: how far before the
-        // sphere a sun's photons start.
+        // causticRadius (this sample's; causticRadiusFirst the first
+        // sample's). sceneExtent: how far before the sphere a sun's photons
+        // start.
         bool caustics = false;
         uint32_t causticPhotons = 65536;
         std::vector<uint32_t> causticLights;
         float causticSphere[4] = {};
-        float causticRadius = 0.0f;
+        float causticRadius = 0.0f, causticRadiusFirst = 0.0f;
         float sceneExtent = 0.0f;
         // Static BLASes are compacted after building (Frame::rtCompaction).
         bool compaction = true;

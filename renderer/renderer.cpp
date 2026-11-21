@@ -3796,6 +3796,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         rt.sceneExtent = std::sqrt(extent);
         float r2 = frame.causticsRadius > 0.0f ? frame.causticsRadius * frame.causticsRadius
                                                 : 4e-4f * rt.causticSphere[3] * rt.causticSphere[3];
+        rt.causticRadiusFirst = std::sqrt(r2);
         for (uint32_t i = 1; film && i < _filmSamples; ++i) {
             r2 *= (float(i) + 2.0f / 3.0f) / float(i + 1);
         }
