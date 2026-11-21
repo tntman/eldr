@@ -29,7 +29,15 @@ Every light has a size, and the size shows in its highlights: a tube light gives
 
 ## Many lights
 
-Eldr sorts local lights into small screen-space clusters, so hundreds of lights cost little. Up to 63 lights can touch one cluster.
+Eldr sorts local lights into small screen-space clusters, so hundreds of lights cost little. Up to 255 lights can light one cluster. Where more reach it, its strongest 191 light it fully and a different sample of the others each film sample stands in for the rest, so the film converges to all of them. Ray-traced bounces find their lights the same way, in a grid over the scene.
+
+**Local Light Shadow Maps** (64) gives shadow maps to the brightest lights near the camera; the others stay unshadowed unless ray traced.
+
+| Sponza with 10,000 candle lights, 960x540 | Per film sample |
+|---|---|
+| Raster, shadow maps cached | 0.29 s |
+| Raster, Jittered Light Shape per Sample (maps redrawn each sample) | 1.6 s |
+| Ray-traced GI and shadows | 0.4 s |
 
 ![200 small sphere lights (30_06, lights)](../images/many_lights.jpg)
 

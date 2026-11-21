@@ -1102,6 +1102,10 @@ void HdVkRenderDelegate::NoteFrame()
     const double sync = _loadSyncMs;
     _loadSyncMs = 0;
     const double total = t.shadersMs + textures + t.rtPipelinesMs + t.bvhMs + sync;
+    if (vkr::TimingLevel() >= 3 && total >= 1.0) {  // an edit's work
+        std::fprintf(stderr, "HdVk work: shaders %.1f, textures %.1f, rt pipelines %.1f, BVH %.1f, commit %.1f ms\n",
+                     t.shadersMs, textures, t.rtPipelinesMs, t.bvhMs, sync);
+    }
     // An edit or a camera move, not a load (the first frame always tells).
     if (total < 250.0 && !_loadLine.empty()) {
         return;

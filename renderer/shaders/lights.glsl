@@ -28,8 +28,8 @@ layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
 
 // 16 x 9 screen tiles x 24 slices, logarithmic in depth. Each cluster is a
 // count followed by up to kMaxClusterLights indices into lights[]. A cluster
-// that reaches more lights holds count = frame.localLights.x and no list: it
-// shades every local light (ClusterLight), slower but never drops one.
+// that more lights reach lists the strongest there and a sample of the rest
+// (lights.comp; ClusterLightScale).
 const uint kClustersX = 16u, kClustersY = 9u, kClustersZ = 24u;
 const uint kMaxClusterLights = 255u;
 layout(std430, set = 0, binding = 14) CLUSTER_ACCESS buffer Clusters { uint clusterLights[]; };
@@ -245,8 +245,33 @@ uint ClusterIndex(vec2 fragCoord, float viewDepth)
     return (slice * kClustersY + tile.y) * kClustersX + tile.x;
 }
 
+// The light grid over the scene's bounds after the view's clusters (traced
+// hits): lights whose range reaches each cell, as a cluster's list.
+uint LightGridCell(uvec3 cell)
+{
+    uint n = uint(frame.lightGrid[0].w);
+    return kClustersX * kClustersY * kClustersZ + (cell.z * n + cell.y) * n + cell.x;
+}
+
+// The list of the light grid's cell around p (clamped into the scene's
+// bounds), as ClusterLight's base. Ray-traced frames only (frame.lightGrid).
+uint LightGridBase(vec3 p)
+{
+    float n = frame.lightGrid[0].w;
+    vec3 lo = frame.lightGrid[0].xyz, size = max(frame.lightGrid[1].xyz - lo, vec3(1e-20));
+    uvec3 cell = uvec3(clamp((p - lo) / size * n, vec3(0.0), vec3(n - 1.0)));
+    return LightGridCell(cell) * (kMaxClusterLights + 1u);
+}
+
 // Light k of the cluster whose list starts at `base`, for k < clusterLights[base].
 uint ClusterLight(uint base, uint k)
 {
-    return clusterLights[base] > kMaxClusterLights ? frame.counts.x + k : clusterLights[base + 1u + k];
+    return clusterLights[base + 1u + k] & 0xFFFFFFu;
+}
+
+// What light k's contribution is multiplied by: 1, or for a light an
+// overflowing cluster sampled, 1 / its probability (lights.comp).
+float ClusterLightScale(uint base, uint k)
+{
+    return exp2(float(clusterLights[base + 1u + k] >> 24u) * 0.125);
 }
