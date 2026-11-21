@@ -53,63 +53,68 @@ void StorePhoton(vec3 p, vec3 flux, vec3 dir)
         atomicExchange(photons[4u + CausticCell(ivec3(floor(p / (kCausticCoarse * rt.caustics.y))), 1u)], i);
 }
 #endif
-// The photons of one grid within r of p (a flat disc around p: at most a
-// quarter radius off its plane) that arrive on n's side: their flux (rgb)
-// and count (a), stopping once `enough` count. level 0: the fine grid, 1
-// the coarse one (r its radius).
+// The caustic light at p (normal n facing the viewer): irradiance / pi of
+// the photons within the gather radius r (a flat disc around p: at most a
+// quarter radius off its plane) that arrive on n's side. The disc's photons
+// are trusted by how many it holds, or would hold at the density within
+// the coarse radius around (a dark gap in a dense web is dark), up to
+// kCausticEnough; the rest of the weight takes the coarse radius's
+// estimate. Light a caster spreads thin (a glass ball's reflection of the
+// sun over the walls) puts one photon in a small disc now and then: a
+// bright dot per sample, too few to average out over the film; the coarse
+// disc spreads it smoothly. As the film shrinks the radius (rt.caustics.w
+// the first sample's), the photons it should hold shrink with its area.
+// The coarse pass stops once it has found enough photons, or visited
+// kCoarseVisits (cells crowded by a dense caustic nearby): either way the
+// fine disc is trusted. `coarse` false skips it: final gather and GI probe
+// hits (ShadeHit), whose many rays average the dots out anyway (with it
+// there, Sponza's banner took 78 s a frame instead of 40).
 // ponytail: at most kMaxGathered photons a pixel (a hang guard for a far too
 // large radius); raise the photon count's share of the radius instead.
 const uint kMaxGathered = 65536u;  // 4096 cut caustics.usda's focus to half
-vec4 CausticGather(vec3 p, vec3 n, float r, uint level, float enough)
+const uint kCoarseVisits = 128u;
+vec3 CausticDiffuse(vec3 p, vec3 n, bool coarse)
 {
-    float r2 = r * r;
-    ivec3 lo = ivec3(floor((p - r) / (2.0 * r)));
-    uint cells[8];
-    vec4 sum = vec4(0.0);
-    uint gathered = 0u;
-    for (int k = 0; k < 8; ++k) {
-        uint cell = CausticCell(lo + ivec3(k & 1, (k >> 1) & 1, k >> 2), level);
-        cells[k] = cell;
-        bool seen = false;
-        for (int j = 0; j < k; ++j) {
-            seen = seen || cells[j] == cell;
-        }
-        for (uint i = seen ? kNone : photons[4u + cell]; i != kNone && gathered < kMaxGathered && sum.a < enough;
-             i = photons[PhotonWord(i) + 3u + 5u * level]) {
-            ++gathered;
-            uint w = PhotonWord(i);
-            vec3 d = uintBitsToFloat(uvec3(photons[w], photons[w + 1u], photons[w + 2u])) - p;
-            if (dot(d, d) < r2 && abs(dot(d, n)) < 0.25 * r &&
-                dot(OctDecode(unpackSnorm2x16(photons[w + 7u])), n) < 0.0) {
-                sum += vec4(uintBitsToFloat(uvec3(photons[w + 4u], photons[w + 5u], photons[w + 6u])), 1.0);
+    float r0 = rt.caustics.x, scale = kCausticCoarse * kCausticCoarse;
+    float enough = kCausticEnough * min(r0 * r0 / (rt.caustics.w * rt.caustics.w), 1.0);
+    vec4 fine = vec4(0.0);
+    for (uint level = 0u; level < (coarse ? 2u : 1u); ++level) {
+        // One gather body for both grids (fewer inlined copies in mesh.frag and ShadeHit).
+        float r = level == 0u ? r0 : kCausticCoarse * r0, r2 = r * r;
+        float stopAt = level == 0u ? 1e30 : enough * scale;
+        uint visits = level == 0u ? kMaxGathered : kCoarseVisits;
+        ivec3 lo = ivec3(floor((p - r) / (2.0 * r)));
+        uint cells[8];
+        vec4 sum = vec4(0.0);
+        uint gathered = 0u;
+        for (int k = 0; k < 8; ++k) {
+            uint cell = CausticCell(lo + ivec3(k & 1, (k >> 1) & 1, k >> 2), level);
+            cells[k] = cell;
+            bool seen = false;
+            for (int j = 0; j < k; ++j) {
+                seen = seen || cells[j] == cell;
+            }
+            for (uint i = seen ? kNone : photons[4u + cell]; i != kNone && gathered < visits && sum.a < stopAt;
+                 i = photons[PhotonWord(i) + 3u + 5u * level]) {
+                ++gathered;
+                uint w = PhotonWord(i);
+                vec3 d = uintBitsToFloat(uvec3(photons[w], photons[w + 1u], photons[w + 2u])) - p;
+                if (dot(d, d) < r2 && abs(dot(d, n)) < 0.25 * r &&
+                    dot(OctDecode(unpackSnorm2x16(photons[w + 7u])), n) < 0.0) {
+                    sum += vec4(uintBitsToFloat(uvec3(photons[w + 4u], photons[w + 5u], photons[w + 6u])), 1.0);
+                }
             }
         }
+        if (level == 0u) {
+            fine = sum;
+            if (fine.a >= enough) {
+                break;
+            }
+        } else {
+            float trust = gathered >= visits ? 1.0 : min(max(fine.a, sum.a / scale) / enough, 1.0);
+            return mix(sum.rgb / (PI * PI * r2), fine.rgb / (PI * PI * r0 * r0), trust);
+        }
     }
-    return sum;
-}
-
-// The caustic light at p (normal n facing the viewer): irradiance / pi of
-// the photons within the gather radius. The disc's photons are trusted by
-// how many it holds, or would hold at the density within the coarse radius
-// around (a dark gap in a dense web is dark), up to kCausticEnough; the
-// rest of the weight takes the coarse radius's estimate. Light a caster
-// spreads thin (a glass ball's reflection of the sun over the walls) puts
-// one photon in a small disc now and then: a bright dot per sample, too few
-// to average out over the film; the coarse disc spreads it smoothly.
-// As the film shrinks the radius (rt.caustics.w the first sample's), the
-// photons it should hold shrink with its area.
-vec3 CausticDiffuse(vec3 p, vec3 n)
-{
-    float r = rt.caustics.x;
-    float enough = kCausticEnough * min(r * r / (rt.caustics.w * rt.caustics.w), 1.0);
-    vec4 fine = CausticGather(p, n, r, 0u, 1e30);
-    vec3 light = fine.rgb / (PI * PI * r * r);
-    if (fine.a < enough) {
-        float R = kCausticCoarse * r, scale = kCausticCoarse * kCausticCoarse;
-        vec4 coarse = CausticGather(p, n, R, 1u, enough * scale);
-        float trust = min(max(fine.a, coarse.a / scale) / enough, 1.0);
-        light = mix(coarse.rgb / (PI * PI * R * R), light, trust);
-    }
-    return light;
+    return fine.rgb / (PI * PI * r0 * r0);
 }
 #endif
