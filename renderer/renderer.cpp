@@ -176,6 +176,8 @@ constexpr uint32_t kFeatureMultiScatter = 1u << 26;
 constexpr uint32_t kFeatureCaustics = 1u << 27;
 // shadow_tint.frag: only caustic casters go into the tint maps (Frame::translucentShadows off).
 constexpr uint32_t kFeatureTintCastersOnly = 1u << 28;
+// frame.glsl: the subsurface blur uses Burley's profile.
+constexpr uint32_t kFeatureBurley = 1u << 29;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
@@ -633,6 +635,16 @@ Renderer::Renderer(Device &device)
     lap("ray tracing");
     _volumePass = std::make_unique<VolumePass>(_dev, _setLayout);
     lap("volume pass");
+}
+
+Renderer::LoadTimes Renderer::TakeLoadTimes()
+{
+    LoadTimes t = _load;
+    _load = {};
+    if (_reflections) {
+        t.shadersMs += _reflections->TakeShadersMs();
+    }
+    return t;
 }
 
 Renderer::~Renderer()
@@ -3045,7 +3057,8 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
     }
     vkCmdEndRendering(_cmd);
     _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits,
-                     std::max(frame.directIntensity, 0.0f), std::max(frame.indirectIntensity, 0.0f));
+                     std::max(frame.directIntensity, 0.0f), std::max(frame.indirectIntensity, 0.0f),
+                     frame.subsurfaceBurley, _stats.sample);
 }
 
 void Renderer::CropToTile(const Frame &frame, float *viewProj, float *invViewProj, bool undo)
@@ -4053,7 +4066,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     // Subsurface scattering blurs by the prepass depth.
     if (draw && frame.subsurface && frame.depthPrepass && !gpu.subsurface.empty()) {
-        fd.features[0] |= kFeatureSubsurface;
+        fd.features[0] |= kFeatureSubsurface | (frame.subsurfaceBurley ? kFeatureBurley : 0u);
     }
     if (frame.volumes && frame.volume.resolution >= 2 && gpu.volumeCount > 0) {
         _volumePass->EnsureHalf(_width, _height);
@@ -5098,6 +5111,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::copy(out.aovComponents, out.aovComponents + Aovs::kCount, aovComponents);
     }
     aovTargets[Aovs::kBeautyRaw] = nullptr;
+    const bool appAovs = Aovs::Any(aovTargets);
     const Aovs::Kind guideKinds[2] = {Aovs::kAlbedo, Aovs::kNormal};
     for (int g = 0; g < 2; ++g) {
         const Aovs::Kind k = guideKinds[g];
@@ -5110,7 +5124,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     _aovsRecorded = Aovs::Any(aovTargets);
     _aovLightScale = frame.lightAovScale;
-    if (_aovsRecorded) {
+    // The guides alone settled: the readback keeps the last ones recorded.
+    const bool guidesSettled =
+        film && !appAovs && frame.denoiseGuideSamples > 0 && _filmSamples > frame.denoiseGuideSamples;
+    if (_aovsRecorded && !guidesSettled) {
         Aovs::Params params;
         std::memcpy(params.view, frame.view, sizeof(params.view));
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));

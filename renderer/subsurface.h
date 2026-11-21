@@ -5,13 +5,14 @@
 namespace vkr {
 
 // Screen-space subsurface scattering, a separable blur of the diffuse
-// light of subsurface materials (after Jimenez et al. 2015, with a
-// Gaussian per colour channel of the material's radius as the profile).
+// light of subsurface materials (after Jimenez et al. 2015), with Burley's
+// normalized diffusion profile (Christensen and Burley 2015) per colour
+// channel, or a Gaussian of the material's radius to compare.
 // The Renderer shades the subsurface meshes a second time into Light()
 // (their subsurface lobe only: subsurface colour times the diffuse light
 // reaching them; alpha: the largest radius) and Id() (the radii's
 // proportions, packed; 0 elsewhere). Blur then spreads that light over
-// the surface, horizontally and vertically, weighting taps by their
+// the surface (a disc of taps, or horizontally then vertically), weighting taps by their
 // distance in the world (so it stops at depth jumps) and skipping other
 // materials, and adds the difference to the colour.
 class Subsurface {
@@ -43,8 +44,11 @@ public:
     // `splits` (Aovs::SplitsView), shared between direct and indirect
     // diffuse by their unblurred shares, without the light path
     // intensities (`direct`, `indirect`) the colour carries.
+    // `burley`: Burley's profile over a disc of 2 * `samples` taps in one
+    // pass, turned by `noise` (per frame); else a Gaussian per channel.
     void Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples,
-              VkImageView splits, bool moveSplits, float direct = 1.0f, float indirect = 1.0f);
+              VkImageView splits, bool moveSplits, float direct = 1.0f, float indirect = 1.0f,
+              bool burley = true, uint32_t noise = 0);
 
 private:
     void _Destroy();

@@ -793,11 +793,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGatherRays, int(frame.finalGatherRays)), 1, 16));
     frame.effectDenoiseSamples = uint32_t(
         std::clamp(delegate->GetRenderSetting<int>(t2.effectDenoiseSamples, int(frame.effectDenoiseSamples)), 0, 65536));
+    frame.denoiseGuideSamples = uint32_t(
+        std::clamp(delegate->GetRenderSetting<int>(t2.denoiseGuideSamples, int(frame.denoiseGuideSamples)), 0, 65536));
     frame.causticsPhotons = uint32_t(
         std::clamp(delegate->GetRenderSetting<int>(t2.causticsPhotons, int(frame.causticsPhotons)), 1024, 1 << 22));
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));
+    frame.subsurfaceBurley = delegate->GetRenderSetting<std::string>(t.subsurfaceProfile, "burley") != "gaussian";
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;
     const std::string tonemapper = delegate->GetRenderSetting<std::string>(t.tonemapper, "aces");
     frame.post.tonemapper = tonemapper == "agx"       ? Tonemapper::Agx

@@ -28,6 +28,20 @@ The build writes `build-h22/houdini/eldr.json`, a Houdini package. It adds `buil
 1. Copy `eldr.json` to `Documents/houdini22.0/packages/`, or set `HOUDINI_PACKAGE_DIR=<build-h22>\houdini`.
 2. Pick Eldr in the Solaris viewport's renderer menu or on a Render Settings LOP.
 
+## Houdini nodes
+
+Eldr adds no nodes of its own: it adds an **Eldr** tab to Houdini's nodes, next to Karma's, and reads Karma's tabs too.
+
+| Node | Eldr adds | Reference |
+|---|---|---|
+| Render Settings LOP | Every `eldr:` render setting, grouped as in the settings reference, each with a Do Nothing / Set or Create / Block menu | [Settings reference](settings.md), [Rendering in Solaris](guide/solaris.md#the-eldr-tab-group-by-group) |
+| Render Geometry Settings LOP | Per-object primvars: subdivision and dicing, visibility, motion, curves and points, reflections, volumes | [Render Geometry Settings](#render-geometry-settings) |
+| Light, Dome Light, Distant Light LOPs | Render Light Geometry, LPE Tag, Contributes to Caustics | [Light tab](#light-tab) |
+| USD Render ROP | Nothing: pick the render settings prim; for crowds, set Render Command to `$ELDR_HUSK` | [Rendering in Solaris](guide/solaris.md#render-to-disk-with-the-usd-render-rop) |
+| Scene viewer | Eldr in the renderer menu, its Display Options page, the render stats panel | [Render statistics](#render-statistics) |
+
+Material Library, Karma Material Builder, Volume, Camera and Render Var / Render Product LOPs work as they do for Karma.
+
 ## Solaris UI
 
 `houdini/gen_ui.py` (CMake target `eldrHoudiniUi`, run with hython) writes the parameter files into `build-h22/houdini/soho/parameters` from the renderer's settings list, grouped as in usdview's settings window.

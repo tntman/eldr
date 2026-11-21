@@ -59,6 +59,7 @@ private:
     VkImage _image = VK_NULL_HANDLE;
     VkDeviceMemory _memory = VK_NULL_HANDLE;
     VkImageView _view = VK_NULL_HANDLE;
+    bool _outOfMemory = false;  // its upload found no GPU memory: left out
 };
 
 uint32_t Channels(Texture::Format f);
@@ -748,6 +749,9 @@ public:
     // changed since the last commit (no material, light, visibility or
     // tag edit), so a commit with no dirty mesh returns at once.
     void Commit(bool keepMotion = false, bool unchanged = false);
+    // What the commits since the last call left out for lack of GPU memory:
+    // the mesh's primId (-1: not a mesh) and why.
+    std::vector<std::pair<int32_t, std::string>> TakeErrors() { return std::move(_errors); }
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }
     // Blocks until the levels of detail being built are done (the next
@@ -1151,8 +1155,10 @@ private:
     void _ReleaseGeometry(Mesh &mesh);
     // Meshes synced since the last Commit whose arrays others share (ShareEarly).
     std::mutex _earlyMutex;
-    std::mutex _uploadMutex;  // _UploadGeometry's pools, shared geometry and staging
+    std::mutex _meshesMutex;  // AddMesh, RemoveMesh (parallel sync)
+    std::mutex _uploadMutex;  // _UploadGeometry's pools, shared geometry and staging, _errors
     std::unordered_multimap<uint64_t, Mesh *> _early;
+    std::vector<std::pair<int32_t, std::string>> _errors;  // TakeErrors
 };
 
 } // namespace vkr

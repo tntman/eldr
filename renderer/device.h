@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <string>
 #include <unordered_map>
@@ -16,6 +17,13 @@ namespace vkr {
 
 // Throws std::runtime_error naming `what` unless r == VK_SUCCESS.
 void Check(VkResult r, const char *what);
+
+// Device::Allocate found no memory left: what() gives the size asked for
+// and the memory in use. Callers that can do without (a texture, a mesh)
+// catch it and leave that out.
+struct OutOfMemory : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 VkShaderModule CreateShaderModule(VkDevice device, const uint32_t *code, size_t bytes);
 

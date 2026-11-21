@@ -255,6 +255,7 @@ private:
     std::string _loadLine;   // the last load's summary
     uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources
     unsigned _committedSettings = ~0u;  // and the render settings' version
+    HdRenderIndex *_renderIndex = nullptr;  // the last render pass's (names meshes in errors)
     unsigned _hostOnlyChanges = 0;      // setting changes SettingsVersion leaves out
     bool _motionSettingsChanged = false;  // since the last CommitResources
     bool _keepMotion = false;             // KeepMotion since the last CommitResources
