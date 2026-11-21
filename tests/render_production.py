@@ -41,7 +41,8 @@ VIEWS = [
     ("sponza_arcade", "Sponza arcade: GI through curtains",
      "The ground-floor arcade lit mostly by sunlight bounced off the courtyard floor and through the curtains."),
     ("sponza_candles", "10,000 candles: many lights",
-     "Sponza at night lit by 10,000 small sphere lights, one per candle flame, and a faint sky."),
+     "Sponza at night lit by 10,000 small sphere lights, one per candle flame, and a faint sky; the camera's "
+     "exposure is -2.5."),
     ("sponza_knight", "Knight: animated mesh, motion blur",
      "The knight add-on mid-lunge: deforming meshes from point time samples, blurred over a 180 degree shutter."),
     ("sponza_flood", "Flood: water refraction",
