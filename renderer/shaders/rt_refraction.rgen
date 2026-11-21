@@ -42,6 +42,10 @@
 // the camera to the first refracting surface (the shading pass matches its
 // fragment to it), negative where the ray left the scene with no dome
 // (the app's background: coverage drops), 0 where none was found.
+// With traced reflections the image's lower half (rows + height) holds that
+// surface's reflection (transparency.glsl GlassReflection): rgb one
+// GGX-sampled ray shaded where it lands, as rt_pixels.rgen's first bounce,
+// a its weight (fading out from kFadeRoughness), 0 for none.
 // Displaced glass (rt.refraction.y: its BLAS is displaced, Work::displacement)
 // bends them by its displaced triangle and the height map's bump, as the
 // shading pass bumps its fragments; a displacement graph's by the displaced
@@ -93,6 +97,7 @@ void main()
     for (;;) {
         if (hit.t < 0.0 || (hit.flags & kHitTranslucent) == 0u || interfaces == 0u) {
             imageStore(rtRefractionImage, pixel, vec4(0.0));
+            imageStore(rtRefractionImage, pixel + ivec2(0, gl_LaunchSizeEXT.y), vec4(0.0));
             return;
         }
         s = Evaluate(dir, cone);
@@ -122,5 +127,25 @@ void main()
         side = ray == 0u ? path.a : side;  // ponytail: the first path decides the coverage
     }
     imageStore(rtRefractionImage, pixel, vec4(sum / float(paths), side * first));
+    vec4 reflection = vec4(0.0);
+    if ((frame.features.x & kFeatureRtReflections) != 0u && firstSurface.roughness < kMaxRoughness) {
+        vec3 n = firstSurface.n, v = -dir, t, b;
+        vec3 ng = dot(firstSurface.ng, v) > 0.0 ? firstSurface.ng : -firstSurface.ng;
+        Basis(n, t, b);
+        float a = firstSurface.roughness * firstSurface.roughness;
+        vec3 h = SampleGgxVndf(vec3(dot(v, t), dot(v, b), max(dot(v, n), 1e-4)), a,
+                               Random2(seed + uvec3(0u, 0u, 7919u), 0u));
+        vec3 l = reflect(dir, t * h.x + b * h.y + n * h.z);
+        l = dot(l, ng) > 0.0 ? l : reflect(dir, n);  // below the surface: the mirror direction
+        TraceMask(OffsetRay(firstHit.position, ng), l, cone + a, kMaskAll);
+        if (hit.t < 0.0) {
+            reflection.rgb = Dome(l, firstSurface.roughness * float(frame.counts.z - 1u));
+        } else {
+            EvaluateHit(l, cone + a);
+            reflection.rgb = ShadeHit(l, seed + uvec3(0u, 0u, 104729u), true, (rt.shadowInfo.w & 1u) != 0u, true, true);
+        }
+        reflection.a = 1.0 - smoothstep(kFadeRoughness, kMaxRoughness, firstSurface.roughness);
+    }
+    imageStore(rtRefractionImage, pixel + ivec2(0, gl_LaunchSizeEXT.y), reflection);
 }
 #endif

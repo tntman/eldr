@@ -64,12 +64,20 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
+# glslc -O0, then spirv-opt -O (the same passes as glslc -O, the same
+# SPIR-V) with a higher id bound: inlining everything into rt_pixels.rgen
+# burns ~4.2M ids, past glslc's fixed 0x3FFFFF, where its optimizer
+# crashes. --compact-ids keeps the result's bound small (~66k).
+get_filename_component(vulkan_bin ${Vulkan_GLSLC_EXECUTABLE} DIRECTORY)
+find_program(SPIRV_OPT spirv-opt HINTS ${vulkan_bin} REQUIRED)
 foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit
         rt_shadow.rahit)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
-                -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        COMMAND Vulkan::glslc -MD -MF ${spv}.d -MT ${spv} --target-env=vulkan1.3 -O0 -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
+                -o ${spv}.O0.spv ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        COMMAND ${SPIRV_OPT} -O --max-id-bound=16777215 --strip-debug --compact-ids ${spv}.O0.spv -o ${spv}.spv
+        COMMAND ${CMAKE_COMMAND} -DSPV=${spv}.spv -DINC=${spv} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/spv_inc.cmake
         DEPFILE ${spv}.d
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl

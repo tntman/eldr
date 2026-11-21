@@ -94,10 +94,6 @@ float PenumbraRadius(uint index, vec3 p, vec3 ng, vec2 u, float footprint)
     return clamp(0.5 * size * hit.t / footprint / 3.0, 1.0 / 255.0, 1.0);
 }
 
-// Reflections are traced up to this perceptual roughness, fading out from
-// kFadeRoughness; rougher surfaces keep the dome's prefiltered light.
-const float kFadeRoughness = 0.5, kMaxRoughness = 0.7;
-
 // A film sample's turn per 8 x 8 block, in [0, 1): a hashed start (salt:
 // one per effect) stepped by a Weyl sequence over the samples, so a block
 // takes a share `keep` of the samples by turn < keep. Per block, not per

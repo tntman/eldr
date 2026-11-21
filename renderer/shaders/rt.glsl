@@ -61,6 +61,10 @@ struct RtHit {
 const uint kHitBackface = 1u;  // the shading normal faces away from the ray
 const uint kHitEmitter = 2u;   // a light stands in for its emission (kRtSlotEmitter)
 const uint kHitTranslucent = 4u;  // a translucent mesh (kRtSlotTranslucent)
+// Reflections are traced up to this perceptual roughness, fading out from
+// kFadeRoughness; rougher surfaces keep the dome's prefiltered light
+// (rt_pixels.rgen, and glass's in rt_refraction.rgen).
+const float kFadeRoughness = 0.5, kMaxRoughness = 0.7;
 
 // A TLAS instance's light link mask (Instance::linkMask): its instance
 // slot's, a skinned one's through rtSkinned. A macro: gi.glsl's rt comes

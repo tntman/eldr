@@ -400,7 +400,7 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
         indirect = mix(indirect, GiLimit(gi.rgb, indirect, bounced), gi.a);
     }
     if (Feature(kFeatureCaustics) && (draws[hit.slot].caustics & kCausticsReceive) != 0u) {
-        indirect += CausticDiffuse(p, n);  // seen in reflections, through glass (a pool's floor), by GI
+        indirect += CausticDiffuse(p, n, gGiRole == 0u);  // seen in reflections, through glass (a pool's floor), by GI
     }
     vec3 radiance = direct + diffuse * indirect;
     gHitSpecular = fss;

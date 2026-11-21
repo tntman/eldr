@@ -37,7 +37,7 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
                          // first layer of penumbra radii (rt_pixels.rgen PenumbraRadius); w: reflection
                          // roulette (rt_pixels.rgen ReflectionKeep)
     // Caustics (caustics.glsl): x this sample's gather radius, y the hash grid's cell size, z how far
-    // before the casters' sphere a sun's photons start.
+    // before the casters' sphere a sun's photons start, w the first sample's gather radius.
     vec4 caustics;
     vec4 causticSphere;      // the casters' bounding sphere: centre, radius
     uvec4 causticInfo;       // photons per light, lights, hash cells (a power of 2), photon capacity

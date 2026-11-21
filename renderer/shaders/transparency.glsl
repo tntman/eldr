@@ -16,8 +16,28 @@ const uint kFeatureRefraction = 4096u, kFeatureHoldouts = 32768u;
 layout(set = 0, binding = 42) uniform sampler2D refractionBackground;
 // Traced refraction (rt_refraction.rgen; frame.rtRefraction.x): per pixel
 // the light along the refracted ray of the nearest refracting surface,
-// that surface's distance in a (negative: the app's background).
+// that surface's distance in a (negative: the app's background); with
+// traced reflections its reflection in the lower half (GlassReflection).
 layout(set = 0, binding = 86, rgba16f) uniform readonly image2D rtRefractionImage;
+
+// The traced reflection of the refracting surface rt_refraction.rgen found
+// at this pixel, if this fragment is it, over `specular` (the dome's,
+// probes' or screen space's) by its weight, as RtReflection for opaque
+// surfaces: off-screen surroundings (a lit ceiling) show in glass.
+vec3 GlassReflection(vec3 specular)
+{
+    if (frame.rtRefraction.x == 0u || !Feature(kFeatureRtReflections) || kShadingPass == 3u) {
+        return specular;
+    }
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    float first = abs(imageLoad(rtRefractionImage, pixel).a);
+    float camera = length(inWorldPos - frame.cameraPos.xyz);
+    if (first == 0.0 || abs(first - camera) > 0.01 * camera) {
+        return specular;
+    }
+    vec4 traced = imageLoad(rtRefractionImage, pixel + ivec2(0, imageSize(rtRefractionImage).y / 2));
+    return mix(specular, traced.rgb, traced.a);
+}
 
 // Transmission, split by TransmissionBegin: the fraction of the pixel
 // seen straight through the surface (opacity's complement, blended over

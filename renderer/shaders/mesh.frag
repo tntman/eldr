@@ -1557,7 +1557,7 @@ void main()
     } else
 #endif
     {
-        specular = RtReflection(specular, inWorldPos, n, perceptual);
+        specular = GlassReflection(RtReflection(specular, inWorldPos, n, perceptual));
     }
     // The diffuse colour already lost what the specular reflects (SetupBase).
     vec3 kd = DiffuseAlbedo(diffuseColor, NoV);
@@ -1570,7 +1570,7 @@ void main()
     // casters, on a receiver's diffuse surface; indirect diffuse light.
     vec3 splitCaustics = vec3(0.0);
     if (Feature(kFeatureCaustics) && (draws[instances[inSlot].draw].caustics & kCausticsReceive) != 0u) {
-        splitCaustics = kd * CausticDiffuse(inWorldPos, n);
+        splitCaustics = kd * CausticDiffuse(inWorldPos, n, true);
         color += splitCaustics;
         splitIndirectDiffuse += splitCaustics;
     }
