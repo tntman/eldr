@@ -1,16 +1,15 @@
-"""Renders the README banner (docs/images/banner.gif, banner.jpg) with Eldr through husk.
-Run from the repo root: python docs\\site\\banner.py [layer] [render] [comp] [gif] (default: all).
+"""Renders the README banner (docs/images/banner.webp, banner.jpg) with Eldr through husk.
+Run from the repo root: python docs\\site\\banner.py [layer] [render] [comp] [webp] (default: all).
 layer: writes docs/site/banner_sponza.usda: Intel's Sponza (CC BY 4.0, not in the repo: SPONZA,
 default E:/usd-testscenes/sponza) with its curtains, ivy and cypress add-ons, Eldr's feature objects
 in the atrium, an animated camera and a final settings prim. render: husk with Eldr's Houdini
 build (ELDR_H22_BUILD, default build-h22) into ELDR_BANNER_TMP (default: a folder in the system
 temp); ELDR_BANNER_TEST=1 renders /Render/bannerTest (few samples), ELDR_BANNER_FRAMES="1 4 18"
 first, count and step. comp: tonemaps each linear EXR (ACES 2.0 SDR) and lays the title over it.
-gif: banner.jpg (frame 1) and banner.gif with Pillow (12 fps, 960 wide)."""
+webp: banner.jpg (frame 1) and the animated banner.webp with Pillow (24 fps, 960 wide)."""
 import math
 import os
 import pathlib
-import random
 import subprocess
 import sys
 import tempfile
@@ -29,16 +28,17 @@ SPONZA_LAYERS = [  # strongest first
 LAYER = ROOT / "docs" / "site" / "banner_sponza.usda"
 OIIO = HFS / "bin" / "hoiiotool.exe"
 W, H, FRAMES, FPS = 1280, 480, 72, 24
-GIF_W, GIF_COLOURS, GIF_STEP = 960, 192, 2
+WEBP_W = 960
 EXPOSURE = 1.3  # linear gain before the display transform
 SAMPLES, TEST_SAMPLES = 128, 16
 
 # Scene units are centimetres (Sponza's). The camera dollies forward and sideways and pulls focus
-# from a near object to the far light panel and back, all on sin/cos of the frame: frame 73 is frame 1.
+# from a near object to the far marble sphere and back, all on sin/cos of the frame: frame 73 is frame 1.
 EYE, LOOK = (740.0, 100.0, 35.0), (-400.0, 130.0, -10.0)
 DOLLY, SWAY = 40.0, 30.0
 FOCAL, H_APERTURE, F_STOP = 28.0, 36.0, 1.0
-FOCUS_NEAR, FOCUS_FAR = (250.0, 25.0, -60.0), (-340.0, 95.0, 0.0)
+JADE, MARBLE = (230.0, 26.0, 115.0), (-60.0, 32.0, 150.0)  # the subsurface and the procedural sphere
+FOCUS_NEAR, FOCUS_FAR = (250.0, 25.0, -60.0), MARBLE
 SUN = (-0.3, -0.95, 0.1)  # the direction sunlight travels
 GLASS, SPOT = (60.0, 32.0, 40.0), (60.0, 150.0, -170.0)  # the glass ball's centre, the IES spot
 ORB_CENTRE, ORB_RADIUS, ORB_TURNS = (60.0, 95.0, 40.0), 80.0, 2
@@ -92,23 +92,6 @@ def orb(t):
             ORB_CENTRE[2] + ORB_RADIUS * math.sin(a))
 
 
-def hair():
-    """A tuft of strands springing from a small disc: bspline curves, 5 points each."""
-    rng = random.Random(7)
-    pts = []
-    n = 500
-    for _ in range(n):
-        r, a = 7 * math.sqrt(rng.random()), rng.random() * 2 * math.pi
-        out = 0.35 + 0.65 * r / 7  # outer strands lean further out
-        h = 30 + 18 * rng.random()
-        lean = 22 * out * (0.7 + 0.6 * rng.random())
-        for k in range(5):
-            u = k / 4
-            rr = r + lean * u * u
-            pts.append((rr * math.cos(a), h * u * (1 - 0.25 * u * u * out), rr * math.sin(a)))
-    return n, ", ".join("(%.2f, %.2f, %.2f)" % p for p in pts)
-
-
 def sphere(name, mtl, p, r):
     return '''def Sphere "%s" (prepend apiSchemas = ["MaterialBindingAPI"])
 {
@@ -120,7 +103,7 @@ def sphere(name, mtl, p, r):
 ''' % (name, r, mtl, p[0], p[1], p[2])
 
 
-def mtlx(name, **inputs):
+def mtlx(name, node="ND_standard_surface_surfaceshader", **inputs):
     lines = "\n".join("            %s inputs:%s = %s" % ({str: "color3f", bool: "bool"}.get(type(v), "float"),
                                                          k, v if not isinstance(v, bool) else int(v))
                       for k, v in inputs.items())
@@ -129,12 +112,105 @@ def mtlx(name, **inputs):
         token outputs:mtlx:surface.connect = </banner/mtl/%(n)s/surface.outputs:out>
         def Shader "surface"
         {
-            uniform token info:id = "ND_standard_surface_surfaceshader"
+            uniform token info:id = "%(node)s"
 %(l)s
             token outputs:out
         }
     }
-''' % dict(n=name, l=lines)
+''' % dict(n=name, l=lines, node=node)
+
+
+# Marble from MaterialX nodes: veins where sin(x + turbulence) crosses 0, on a polished white stone.
+MARBLE_MTL = '''    def Material "marble"
+    {
+        token outputs:mtlx:surface.connect = </banner/mtl/marble/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color.connect = </banner/mtl/marble/colour.outputs:out>
+            float inputs:coat = 0.6
+            float inputs:coat_roughness = 0.05
+            float inputs:specular_roughness = 0.3
+            token outputs:out
+        }
+        def Shader "position"
+        {
+            uniform token info:id = "ND_position_vector3"
+            string inputs:space = "object"
+            float3 outputs:out
+        }
+        def Shader "scaled"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            float3 inputs:in1.connect = </banner/mtl/marble/position.outputs:out>
+            float inputs:in2 = 0.05
+            float3 outputs:out
+        }
+        def Shader "turbulence"
+        {
+            uniform token info:id = "ND_fractal3d_float"
+            float inputs:amplitude = 1
+            int inputs:octaves = 5
+            float3 inputs:position.connect = </banner/mtl/marble/scaled.outputs:out>
+            float outputs:out
+        }
+        def Shader "along"
+        {
+            uniform token info:id = "ND_dotproduct_vector3"
+            float3 inputs:in1.connect = </banner/mtl/marble/scaled.outputs:out>
+            float3 inputs:in2 = (2.5, 1.5, 0.8)
+            float outputs:out
+        }
+        def Shader "warped"
+        {
+            uniform token info:id = "ND_add_float"
+            float inputs:in1.connect = </banner/mtl/marble/along.outputs:out>
+            float inputs:in2.connect = </banner/mtl/marble/turbulenceScaled.outputs:out>
+            float outputs:out
+        }
+        def Shader "turbulenceScaled"
+        {
+            uniform token info:id = "ND_multiply_float"
+            float inputs:in1.connect = </banner/mtl/marble/turbulence.outputs:out>
+            float inputs:in2 = 4
+            float outputs:out
+        }
+        def Shader "wave"
+        {
+            uniform token info:id = "ND_sin_float"
+            float inputs:in.connect = </banner/mtl/marble/warped.outputs:out>
+            float outputs:out
+        }
+        def Shader "distance"
+        {
+            uniform token info:id = "ND_absval_float"
+            float inputs:in.connect = </banner/mtl/marble/wave.outputs:out>
+            float outputs:out
+        }
+        def Shader "nearVein"
+        {
+            uniform token info:id = "ND_subtract_float"
+            float inputs:in1 = 1
+            float inputs:in2.connect = </banner/mtl/marble/distance.outputs:out>
+            float outputs:out
+        }
+        def Shader "vein"
+        {
+            uniform token info:id = "ND_power_float"
+            float inputs:in1.connect = </banner/mtl/marble/nearVein.outputs:out>
+            float inputs:in2 = 3
+            float outputs:out
+        }
+        def Shader "colour"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:bg = (0.9, 0.88, 0.84)
+            color3f inputs:fg = (0.06, 0.07, 0.1)
+            float inputs:mix.connect = </banner/mtl/marble/vein.outputs:out>
+            color3f outputs:out
+        }
+    }
+'''
 
 
 def rel(path):
@@ -170,12 +246,9 @@ def layer():
     cam = ",\n".join("            %d: %s" % (f, matrix(*eye(f))) for f in range(0, FRAMES + 2))
     foc = ",\n".join("            %d: %.2f" % (f, focus(f)) for f in range(0, FRAMES + 2))
     orbs = ",\n".join("            %g: (%.2f, %.2f, %.2f)" % ((t / 2,) + orb(t / 2)) for t in range(0, 2 * FRAMES + 4))
-    n, hair_points = hair()
     # binding_api.usda applies MaterialBindingAPI to the add-ons' meshes (their files leave it out).
     sub = ",\n".join(["        @%s@" % rel("tests/scenes/production/binding_api.usda")] +
                      ["        @%s@" % (SPONZA / l).as_posix() for l in SPONZA_LAYERS])
-    wax = dict(base_color="(0.9, 0.8, 0.62)", specular_roughness=0.35, subsurface=1.0,
-               subsurface_color="(0.95, 0.72, 0.4)", subsurface_radius="(1, 0.55, 0.25)", subsurface_scale=4.0)
     LAYER.write_text('''#usda 1.0
 (
     doc = """README banner: written by docs/site/banner.py layer. Intel Sponza (CC BY 4.0) with
@@ -192,7 +265,7 @@ its curtains, ivy and cypress add-ons, read from %(sponza)s (not in the repo).""
     upAxis = "Y"
 )
 
-# The cypress add-on is in metres: scaled to Sponza's centimetres, moved behind the light panel.
+# The cypress add-on is in metres: scaled to Sponza's centimetres, moved to the back of the atrium.
 over "Italian_Cypress_Dense_Custom_05b"
 {
     matrix4d xformOp:transform = ( (100, 0, 0, 0), (0, 0, -100, 0), (0, 100, 0, 0), (-620, 0, 190, 1) )
@@ -233,19 +306,6 @@ def DomeLight "sky"
     asset inputs:texture:file = @%(sky)s@
 }
 
-# A textured panel facing the camera at the far end of the objects; the camera sees it.
-def RectLight "panel"
-{
-    float inputs:height = 66
-    float inputs:intensity = 1.5
-    bool inputs:karma:light:renderlightgeo = 1
-    asset inputs:texture:file = @%(quadrants)s@
-    float inputs:width = 100
-    float xformOp:rotateY = -90
-    double3 xformOp:translate = (-340, 95, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
-}
-
 # An IES spot (tests/scenes/cornell/beam.ies) low on one side of the glass ball: the ball focuses
 # it into a caustic on the floor beyond.
 def SphereLight "iesSpot" (prepend apiSchemas = ["ShapingAPI"])
@@ -280,31 +340,9 @@ def Sphere "orb" (prepend apiSchemas = ["MaterialBindingAPI"])
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
-def Cylinder "wax" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    token axis = "Y"
-    double height = 55
-    double radius = 13
-    rel material:binding = </banner/mtl/wax>
-    double3 xformOp:translate = (230, 27.5, 110)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-}
-
-def BasisCurves "hair"
-{
-    uniform token basis = "bspline"
-    int[] curveVertexCounts = [%(counts)s]
-    point3f[] points = [%(hair)s]
-    color3f[] primvars:displayColor = [(0.75, 0.5, 0.22)] (interpolation = "constant")
-    uniform token type = "cubic"
-    float[] widths = [0.25] (interpolation = "constant")
-    double3 xformOp:translate = (240, 0, 25)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-}
-
 def Scope "mtl"
 {
-%(glass)s%(chrome)s%(steel)s%(paint)s%(film)s%(wax)s
+%(glass)s%(chrome)s%(steel)s%(paint)s%(film)s%(jade)s%(marble)s
     def Material "glow"
     {
         token outputs:surface.connect = </banner/mtl/glow/surface.outputs:surface>
@@ -324,12 +362,13 @@ def Scope "Render"
 %(settings)s}
 ''' % dict(sponza=SPONZA.as_posix(), end=FRAMES, fps=FPS, sub=sub, focal=FOCAL, fstop=F_STOP, foc=foc,
            hap=H_APERTURE, vap=H_APERTURE * H / W, cam=cam, sun=matrix((0, 0, 0), SUN), glass_at="%g, %g, %g" % GLASS, spot=matrix(SPOT, [GLASS[i] - SPOT[i] for i in range(3)]), sky=(SPONZA / "main_sponza/textures/kloppenheim_05_4k.hdr").as_posix(), orbs=orbs,
-           quadrants=rel("tests/scenes/textures/quadrants.png"), ies=rel("tests/scenes/cornell/beam.ies"),
+           ies=rel("tests/scenes/cornell/beam.ies"),
            spheres="".join([sphere("chrome", "chrome", (110, 30, -120), 30),
-                            sphere("brushed", "steel", (-60, 26, 150), 26),
+                            sphere("brushed", "steel", (-200, 26, 215), 26),
                             sphere("carPaint", "paint", (250, 25, -60), 25),
-                            sphere("thinFilm", "film", (-40, 26, -40), 26)]),
-           counts=", ".join(["5"] * n), hair=hair_points,
+                            sphere("thinFilm", "film", (-40, 26, -40), 26),
+                            sphere("jade", "jade", JADE, 26),
+                            sphere("marble", "marble", MARBLE, 30)]),
            glass=mtlx("glass", specular_IOR=1.5, specular_roughness=0.0, transmission=1.0),
            chrome=mtlx("chrome", base_color="(0.95, 0.95, 0.95)", metalness=1.0, specular_roughness=0.03),
            steel=mtlx("steel", base_color="(0.9, 0.9, 0.92)", metalness=1.0, specular_anisotropy=0.8,
@@ -338,7 +377,10 @@ def Scope "Render"
                       specular_roughness=0.45),
            film=mtlx("film", base_color="(0.6, 0.6, 0.62)", metalness=1.0, specular_roughness=0.2, thin_film_IOR=2.0,
                      thin_film_thickness=500.0),
-           wax=mtlx("wax", **wax), settings=settings("banner", SAMPLES) + "\n" + settings("bannerTest", TEST_SAMPLES)))
+           jade=mtlx("jade", "ND_open_pbr_surface_surfaceshader", base_color="(0.3, 0.6, 0.4)",
+                     specular_roughness=0.15, subsurface_weight=1.0, subsurface_color="(0.35, 0.75, 0.45)",
+                     subsurface_radius=3.0, subsurface_radius_scale="(0.5, 1, 0.6)"),
+           marble=MARBLE_MTL, settings=settings("banner", SAMPLES) + "\n" + settings("bannerTest", TEST_SAMPLES)))
 
 
 def render():
@@ -390,22 +432,19 @@ def comp():
              "--ch", "R,G,B,A=1.0", "--over", "--ch", "R,G,B", "-d", "uint8", "-o", TMP / ("comp.%04d.png" % f)])
 
 
-def gif():
+def webp():
     images = ROOT / "docs" / "images"
     run([OIIO, TMP / "comp.0001.png", "-o:quality=88", images / "banner.jpg"])
-    # Houdini's hffmpeg has no GIF encoder: Pillow writes it. Every GIF_STEP-th frame, each with its own
-    # octree palette and no dither: dithering noise and a shared palette (which loses the small saturated
-    # areas) both cost more than the GIF's size budget (~5 MB) allows.
+    # Houdini's hffmpeg has no animated WebP encoder: Pillow writes it, every frame, 960 wide.
     from PIL import Image
-    frames = [Image.open(TMP / ("comp.%04d.png" % f)).convert("RGB") for f in range(1, FRAMES + 1, GIF_STEP)]
-    frames = [im.resize((GIF_W, round(GIF_W * im.height / im.width)), Image.LANCZOS) for im in frames]
-    frames = [im.quantize(GIF_COLOURS, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE) for im in frames]
-    frames[0].save(images / "banner.gif", save_all=True, append_images=frames[1:],
-                   duration=round(1000 * GIF_STEP / FPS), loop=0)
-    print("banner.gif: %.2f MB" % ((images / "banner.gif").stat().st_size / 1e6))
+    frames = [Image.open(TMP / ("comp.%04d.png" % f)).convert("RGB") for f in range(1, FRAMES + 1)]
+    frames = [im.resize((WEBP_W, round(WEBP_W * im.height / im.width)), Image.LANCZOS) for im in frames]
+    frames[0].save(images / "banner.webp", save_all=True, append_images=frames[1:], duration=round(1000 / FPS),
+                   loop=0, quality=80, method=6)
+    print("banner.webp: %.2f MB" % ((images / "banner.webp").stat().st_size / 1e6))
 
 
 if __name__ == "__main__":
-    steps = sys.argv[1:] or ["layer", "render", "comp", "gif"]
+    steps = sys.argv[1:] or ["layer", "render", "comp", "webp"]
     for step in steps:
         globals()[step]()

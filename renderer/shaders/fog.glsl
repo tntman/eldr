@@ -21,6 +21,8 @@ vec4 Fog(vec2 fragCoord, float viewDepth)
     }
     float slices = float(frame.fogGrid.z);
     float k = sqrt(clamp(viewDepth / frame.fogAlbedo.w, 0.0, 1.0)) * slices;  // slice coordinate
-    vec4 fog = textureLod(fogVolume, vec3(fragCoord / frame.viewport.xy, (k - 0.5) / slices), 0.0);
+    // The grid's shift this film sample (fog_inject.comp), in froxels.
+    vec2 uv = fragCoord / frame.viewport.xy - uintBitsToFloat(frame.sampleInfo.zw) / vec2(frame.fogGrid.xy);
+    vec4 fog = textureLod(fogVolume, vec3(uv, (k - 0.5) / slices), 0.0);
     return k < 1.0 ? mix(vec4(0.0, 0.0, 0.0, 1.0), fog, k) : fog;  // fades in over the first slice
 }
