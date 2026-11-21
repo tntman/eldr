@@ -1557,7 +1557,7 @@ void main()
     } else
 #endif
     {
-        specular = RtReflection(specular, inWorldPos, n, perceptual);
+        specular = GlassReflection(RtReflection(specular, inWorldPos, n, perceptual));
     }
     // The diffuse colour already lost what the specular reflects (SetupBase).
     vec3 kd = DiffuseAlbedo(diffuseColor, NoV);

@@ -617,7 +617,8 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
     _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, _imageReflections ? width : 1,
                                     _imageReflections ? height : 1);
     if (_work.refraction) {
-        _refractionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
+        // Below the refracted light, the glass's traced reflection (rt_refraction.rgen).
+        _refractionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height * 2);
     }
     if (_work.gather) {
         _gatherImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
