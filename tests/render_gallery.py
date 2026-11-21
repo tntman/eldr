@@ -95,10 +95,15 @@ DESCRIPTIONS = {
                     "highlight, the right one \"presence\" fades completely.",
 }
 # What a card shows in Eldr that differs from Karma on purpose or by a known limitation.
-NOTES = {"complex_caustics": "the default render has no ray tracing and so no caustics: the casters' glass casts a "
+NOTES = {"complex_caustics": "Eldr raster + SSGI has no ray tracing and so no caustics: the casters' glass casts a "
                              "dark shadow, and screen-space GI misses the light bounced off the ceiling, out of view. "
-                             "The final render traces photons from the light, so the web and the glass's ring are "
-                             "sharp where Karma's caustics, traced from the camera, are still noisy."}
+                             "Eldr ray traced traces photons from the light, so the web and the glass's ring are "
+                             "sharp where Karma's caustics, traced from the camera, are still noisy.",
+         "opacity_mode": "the right quad fades with its opacity, as UsdPreviewSurface's \"presence\" mode asks; "
+                         "Karma renders both quads alike, with the full highlight.",
+         "materialx_nodes": "the dodge swatch (top row, fifth) follows MaterialX's own formula, as Storm does; "
+                            "Karma's differs. Karma XPU leaves the glTF and Disney surfaces grey.",
+         "bsdf_graphs": "Karma XPU leaves these surfaces grey: it doesn't render MaterialX BSDF graphs or Lama."}
 # Showcase Cornell boxes lit by glowing surfaces only, in the Cornell section: (name, showcase folder, heading).
 # Karma renders them at EMISSIVE_SAMPLES.
 EMISSIVE = [("emissive_lights", "2026-10-28_03_emissive_lights", "Glowing panel and bulb"),
@@ -123,18 +128,15 @@ FEATURES = [("material_lobes", "2026-10-30_22_material_lobes", "Material lobes")
             ("transparency_order", "2026-10-29_09_transparency_order", "Glass, translucency and smoke in order"),
             ("planar_blur", "2026-10-29_03_planar_reflection_blur", "Rough mirror floor"),
             ("ssr", "2026-10-30_11_screen_space_reflections", "Screen-space reflections"),
-            ("reflection_probe", "2026-10-30_23_reflection_probe", "Reflection probe"),
             ("ambient_occlusion", "2026-10-30_09_ambient_occlusion", "Ambient occlusion"),
             ("shadow_modes", "2026-10-30_10_shadow_modes", "Shadows"),
             ("dome_sun", "2026-10-30_08_dome_sun", "Sun from an HDRI"),
             ("further_suns", "2026-10-30_26_further_sun_shadows", "A second sun's shadows"),
             ("shadow_linking", "2026-10-29_15_light_linking", "Light and shadow linking"),
             ("colour_limit", "2026-10-29_17_colour_limit", "Colour limit"),
-            ("velocity_blur", "2026-10-28_02_velocity_blur", "Velocity motion blur"),
             ("reflection_blur", "2026-10-29_10_reflection_motion_blur", "Motion blur in reflections"),
             ("instancing", "2026-10-30_20_instancing", "Nested instancing"),
             ("coloured_shadows", "2026-10-29_05_coloured_volume_shadows", "Coloured volume shadows"),
-            ("volume_default", "2026-10-29_08_volume_default_material", "Volumes without a material"),
             ("volume_blur", "2026-10-29_18_volume_motion_blur", "Volume motion blur"),
             ("cryptomatte", "2026-10-30_15_cryptomatte", "Cryptomatte"),
             ("aovs", "2026-10-29_06_karma_aovs", "AOVs and light groups"),
@@ -196,13 +198,15 @@ def showcase(name, folder, title, section):
     from pxr import Usd
     usd = os.path.join(SHOWCASE, folder, "scene.usda")
     karma = prim_block(open(usd, encoding="utf-8").read(), "karma")
-    summary = open(os.path.join(SHOWCASE, folder, "README.md"), encoding="utf-8").read().split("<!-- summary -->")
+    readme = open(os.path.join(SHOWCASE, folder, "README.md"), encoding="utf-8").read()
+    summary = readme.split("<!-- summary -->")
     spp = int(find(r"pathtracedsamples = (\d+)", karma, default=("256",))[0])
     return dict(name=name, section=section, title=title, usd=usd, folder=folder,
                 desc=DESCRIPTIONS.get(name) or (" ".join(summary[1].split()) if len(summary) > 2 else ""),
                 res=tuple(map(int, find(r"resolution = \((\d+), (\d+)\)", karma, default=(960, 540)))),
                 spp=spp if has_lights(Usd.Stage.Open(usd)) else max(spp, EMISSIVE_SAMPLES),
                 karma_effects=karma_effects(karma),
+                frame=int(find(r"Render frame (\d+)", readme, default=("1",))[0]),  # the README's frame
                 prims=dict(eldr_default="/Render/eldr_default", eldr_final="/Render/eldr_final", karma="/Render/karma"))
 
 
@@ -240,13 +244,16 @@ def karma_times(log):
 
 def eldr_times(log, csv):
     """(render, load) seconds from Eldr's log and timing CSV: its render passes less the loading in them
-    (shaders, textures, rt pipelines, BVH; sync runs outside them), and all its loading."""
+    (the textures they collect, the CSV's collect_ms; shaders, rt pipelines and BVH from the log; sync and
+    the textures read before runs outside them), and all its loading."""
     rows = list(csvfile.DictReader(open(csv))) if os.path.exists(csv) else []
     if not rows:
         return None, None
-    loads = re.findall(r"Eldr: loaded in ([\d.]+) s: .*?sync ([\d.]+)", open(log, errors="replace").read())
-    load = sum(float(a) for a, _ in loads)
-    inside = sum(float(a) - float(b) for a, b in loads)
+    loads = re.findall(r"Eldr: loaded in ([\d.]+) s: shaders ([\d.]+), textures [\d.]+, rt pipelines ([\d.]+), "
+                       r"BVH ([\d.]+)", open(log, errors="replace").read())
+    load = sum(float(a) for a, *_ in loads)
+    inside = sum(float(s) + float(r) + float(b) for _, s, r, b in loads) + \
+        sum(float(x.get("collect_ms") or 0) for x in rows) / 1000
     return max(sum(float(x["execute_ms"]) for x in rows) / 1000 - inside, 0.0), load
 
 
@@ -303,7 +310,8 @@ def render(s, outdir, build, force, new):
                 if os.path.exists(f):
                     os.remove(f)
             (code, wall), sec, load, cold = timed(
-                [HUSK, "-R", plugin, "-s", prim, "-f", "1", "-n", "1", "-V", "2", "-o", exr, scene], log, csv, env)
+                [HUSK, "-R", plugin, "-s", prim, "-f", str(s.get("frame", 1)), "-n", "1", "-V", "2", "-o", exr, scene],
+                log, csv, env)
             rt = "HdVk rt pipeline" in open(log, errors="replace").read()
             known[r] = dict(ok=os.path.exists(exr), wall=wall, sec=sec if sec is not None else wall, load=load,
                             cold=cold, rt=rt)
@@ -684,10 +692,11 @@ def extra_tiles(s, d, env, force):
             "reflection, which screen-space reflections find on screen in the whole image and the reflection "
             "probe supplies in a tile (traced reflections are the same either way).", "",
             "![Tiled rendering: tiles, whole image and their difference]({img}features/tiles_whole.jpg)", "",
-            "The same scene (ray tracing off) at growing sizes, its `tiles` settings with %d-pixel tiles: GPU "
-            "memory stays with the tile, not the image (peak GPU memory above what was in use before the "
-            "render, sampled by nvidia-smi). A whole 12000 × 12000 image would need about 170 bytes a pixel, "
-            "24 GB." % TILE, ""] + rows + [""]
+            "The same scene (ray tracing off) at growing sizes with its `tiles` settings and %d-pixel tiles "
+            "(peak GPU memory above what was in use before the render, sampled by nvidia-smi). The screen-size "
+            "buffers, about 170 bytes a pixel, stay at the tile's size; only the whole image's bloom, exposure "
+            "and tonemapping grow with it, about 27 bytes a pixel. A whole 12000 × 12000 image would need "
+            "about 24 GB." % TILE, ""] + rows + [""]
 
 
 EXTRAS = {"aovs": extra_aovs, "cryptomatte": extra_cryptomatte, "tiles": extra_tiles}
@@ -848,8 +857,8 @@ def sections(rows, img, hero=None):
             if r["section"] != sec:
                 continue
             md += ["### " + r["title"], "", r["desc"] + (" (`showcase/%s`)" % r["folder"] if "folder" in r else ""), ""]
-            if r["name"] in NOTES and sec == "cornell":
-                md += ["*In Eldr:* " + NOTES[r["name"]], ""]
+            if r["name"] in NOTES:
+                md += ["*Note:* " + NOTES[r["name"]][0].upper() + NOTES[r["name"]][1:], ""]
             md += ["![%s: %s](%s%s)" % (r["title"], ", ".join(LABEL[k] for k in r["renderers"]), img, r["image"]), ""]
             md += [line.replace("{img}", img) for line in r.get("extra", [])]
     return md
