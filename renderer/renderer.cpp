@@ -2260,6 +2260,13 @@ bool Renderer::_SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *d
     const bool usable = _fog.Resize(x, y, kSlices);
     const bool history = usable && !_filmFroxels && _fogDepth > 0.0f && key == _fogKey;
     data->sampleInfo[1] = _filmFroxels ? 1 : 0;
+    // A film sample also shifts the whole grid by a fraction of a froxel (R2
+    // sequence; fog.glsl's Fog reads it back): the film averages the shifted
+    // grids, so detail smaller than a froxel (a narrow spot's apex) blurs
+    // smoothly instead of showing the froxels as blocks.
+    const float shift[2] = {_filmFroxels ? std::fmod(0.5f + 0.7548777f * float(_filmSamples), 1.0f) : 0.0f,
+                            _filmFroxels ? std::fmod(0.5f + 0.5698403f * float(_filmSamples), 1.0f) : 0.0f};
+    std::memcpy(&data->sampleInfo[2], shift, sizeof(shift));
     _fogKey = key;
     // History: 90% of last frame's grid, sampled half a slice apart on average.
     const float temporal[4] = {history ? _fog.Jitter() : 0.5f, history ? 0.9f : 0.0f, history ? _fogDepth : depth,

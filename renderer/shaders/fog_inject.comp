@@ -199,7 +199,9 @@ void main()
                       SampleNoise(kDimFog, q + vec2(31.0, 7.0), float(frame.localLights.y) + 3.0),
                       SampleNoise(kDimFog, q + vec2(11.0, 47.0), float(frame.localLights.y) + 7.0));
     }
-    vec2 ndc = (vec2(id.xy) + jitter.xy) / grid.xy * 2.0 - 1.0;
+    // A film sample shifts the grid by sampleInfo.zw froxels (0 otherwise; Fog() reads it back).
+    vec2 cell = vec2(id.xy) + uintBitsToFloat(frame.sampleInfo.zw);
+    vec2 ndc = (cell + jitter.xy) / grid.xy * 2.0 - 1.0;
     float depth = FogSliceDepth((float(id.z) + jitter.z) / grid.z);
     vec3 a = Unproject(vec3(ndc, -1.0)), b = Unproject(vec3(ndc, 0.0));
     vec3 forward = frame.cameraForward.xyz;
@@ -220,7 +222,7 @@ void main()
         light += sun.color.rgb * (sun.halfHeight.w * Phase(dot(-sun.position.xyz, toCamera)) * shadow);
     }
     if (frame.localLights.x > 0u && (frame.features.x & kFeatureClusters) != 0u) {
-        uint base = ClusterIndex((vec2(id.xy) + 0.5) / grid.xy * frame.viewport.xy, depth) * (kMaxClusterLights + 1u);
+        uint base = ClusterIndex((cell + 0.5) / grid.xy * frame.viewport.xy, depth) * (kMaxClusterLights + 1u);
         uint count = clusterLights[base];
         for (uint k = 0u; k < count; ++k) {
             light += LocalLight(ClusterLight(base, k), p, toCamera);
