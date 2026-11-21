@@ -501,6 +501,10 @@ public:
         // the film starts over (post, AOVs from it: the light splits stay
         // raw; Aovs::kBeautyRaw: the image before).
         bool denoise = false;
+        // The guides (albedo, normal) average the film's first this many
+        // samples only, when no app asked for those AOVs: their pass
+        // (a G-buffer draw, resolve and readback copy) stops after. 0: every sample.
+        uint32_t denoiseGuideSamples = 32;
         // GI preconverge: with gi, the film waits until fresh probes have
         // settled (RayTracing::Converged), so no sample sees half-filled ones.
         bool giPreconverge = true;
@@ -758,12 +762,8 @@ public:
     struct LoadTimes {
         double shadersMs = 0, rtPipelinesMs = 0, bvhMs = 0;
     };
-    LoadTimes TakeLoadTimes()
-    {
-        const LoadTimes t = _load;
-        _load = {};
-        return t;
-    }
+    // Its probe and mirror renderers' shading compiles included.
+    LoadTimes TakeLoadTimes();
     // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
     void WaitForPrewarm();
     // Starts compiling the ray tracing pipelines ahead of the first traced

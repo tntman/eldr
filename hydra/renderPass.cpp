@@ -794,6 +794,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGatherRays, int(frame.finalGatherRays)), 1, 16));
     frame.effectDenoiseSamples = uint32_t(
         std::clamp(delegate->GetRenderSetting<int>(t2.effectDenoiseSamples, int(frame.effectDenoiseSamples)), 0, 65536));
+    frame.denoiseGuideSamples = uint32_t(
+        std::clamp(delegate->GetRenderSetting<int>(t2.denoiseGuideSamples, int(frame.denoiseGuideSamples)), 0, 65536));
     frame.causticsPhotons = uint32_t(
         std::clamp(delegate->GetRenderSetting<int>(t2.causticsPhotons, int(frame.causticsPhotons)), 1024, 1 << 22));
     // 0 allowed: no skinned instance blocks rays.

@@ -56,9 +56,9 @@
       "mald": 0.025
     },
     "subsurface": {
-      "lum": 0.9419,
-      "region": 1.0092,
-      "mald": 0.2022
+      "lum": 0.8602,
+      "region": 0.4541,
+      "mald": 0.1718
     },
     "caustics": {
       "lum": 0.974,

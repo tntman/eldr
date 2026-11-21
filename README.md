@@ -1,5 +1,9 @@
 <div align="center">
 
+<p align="center">
+  <img src="docs/images/banner.webp" alt="Eldr: A Vulkan Hydra render delegate for OpenUSD, MaterialX and Houdini Solaris" width="100%">
+</p>
+
 <h1>Eldr</h1>
 
 <p><b>A GPU raster renderer for OpenUSD and MaterialX. Final VFX frames to EXR in seconds, with Karma as the look it aims for.</b></p>
@@ -66,6 +70,8 @@ The display name is **Eldr** everywhere; the plugin id is `HdVkRendererPlugin`, 
 
 <!-- GALLERY -->
 ## Gallery
+
+*Hardware: AMD Ryzen 9 3950X (16 cores, 32 threads), 48 GB RAM, NVIDIA GeForce GTX 1080 Ti 11 GB (driver 582.78; no RT cores, so Eldr's ray tracing runs through its compute fallback), Windows 11 Pro, Houdini 22.0.466. Karma CPU runs on the Ryzen, Karma XPU on the GTX 1080 Ti (with the CPU).*
 
 Every scene renders four ways with husk: ● **Eldr default**, every effect that works without ray tracing (screen-space GI, reflections and refraction, planar mirrors, ambient occlusion, subsurface, soft shadow maps, denoising, 256 film samples: `tests/scenes/cornell/eldr_default.usda`); ◆ **Eldr final**, ray traced (reflections, refraction, shadows, GI, final gather, caustics, denoising, 256 film samples: `tests/scenes/cornell/eldr_final.usda`); ▲ **Karma XPU** and ■ **Karma CPU** with the scene's Karma settings. Karma CPU is the brightness reference.
 
@@ -633,3 +639,5 @@ Eldr builds on [OpenUSD](https://openusd.org) and its Hydra framework, [Material
 Eldr is licensed under the [Apache License 2.0](LICENSE).
 
 `third_party/nanovdb` holds NanoVDB's `PNanoVDB.h` from OpenVDB (MPL-2.0, unmodified). OpenUSD, Houdini, Vulkan, Intel OIDN and MaterialX keep their own licences.
+
+Banner rendered in Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) with the add-on packages by the Sponza Add-on Package Crew; CC BY 4.0. Rendered with Eldr by `docs/site/banner.py`.

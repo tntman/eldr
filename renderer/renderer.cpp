@@ -641,6 +641,16 @@ Renderer::Renderer(Device &device)
     lap("volume pass");
 }
 
+Renderer::LoadTimes Renderer::TakeLoadTimes()
+{
+    LoadTimes t = _load;
+    _load = {};
+    if (_reflections) {
+        t.shadersMs += _reflections->TakeShadersMs();
+    }
+    return t;
+}
+
 Renderer::~Renderer()
 {
     const auto t0 = std::chrono::steady_clock::now();
@@ -2254,6 +2264,13 @@ bool Renderer::_SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *d
     const bool usable = _fog.Resize(x, y, kSlices);
     const bool history = usable && !_filmFroxels && _fogDepth > 0.0f && key == _fogKey;
     data->sampleInfo[1] = _filmFroxels ? 1 : 0;
+    // A film sample also shifts the whole grid by a fraction of a froxel (R2
+    // sequence; fog.glsl's Fog reads it back): the film averages the shifted
+    // grids, so detail smaller than a froxel (a narrow spot's apex) blurs
+    // smoothly instead of showing the froxels as blocks.
+    const float shift[2] = {_filmFroxels ? std::fmod(0.5f + 0.7548777f * float(_filmSamples), 1.0f) : 0.0f,
+                            _filmFroxels ? std::fmod(0.5f + 0.5698403f * float(_filmSamples), 1.0f) : 0.0f};
+    std::memcpy(&data->sampleInfo[2], shift, sizeof(shift));
     _fogKey = key;
     // History: 90% of last frame's grid, sampled half a slice apart on average.
     const float temporal[4] = {history ? _fog.Jitter() : 0.5f, history ? 0.9f : 0.0f, history ? _fogDepth : depth,
@@ -5119,6 +5136,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::copy(out.aovComponents, out.aovComponents + Aovs::kCount, aovComponents);
     }
     aovTargets[Aovs::kBeautyRaw] = nullptr;
+    const bool appAovs = Aovs::Any(aovTargets);
     const Aovs::Kind guideKinds[2] = {Aovs::kAlbedo, Aovs::kNormal};
     for (int g = 0; g < 2; ++g) {
         const Aovs::Kind k = guideKinds[g];
@@ -5131,7 +5149,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     _aovsRecorded = Aovs::Any(aovTargets);
     _aovLightScale = frame.lightAovScale;
-    if (_aovsRecorded) {
+    // The guides alone settled: the readback keeps the last ones recorded.
+    const bool guidesSettled =
+        film && !appAovs && frame.denoiseGuideSamples > 0 && _filmSamples > frame.denoiseGuideSamples;
+    if (_aovsRecorded && !guidesSettled) {
         Aovs::Params params;
         std::memcpy(params.view, frame.view, sizeof(params.view));
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
