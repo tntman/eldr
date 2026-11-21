@@ -564,7 +564,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     if (!LightLinked(lights[index], linkMask)) {
                         continue;
                     }
-                    vec3 e = LocalIrradiance(index, x, l);
+                    vec3 e = LocalIrradiance(index, x, l) * (clusters ? ClusterLightScale(base, k) : 1.0);
                     if (!any(greaterThan(e, vec3(0.0)))) {
                         continue;
                     }

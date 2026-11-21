@@ -28,7 +28,8 @@ layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
 
 // 16 x 9 screen tiles x 24 slices, logarithmic in depth. Each cluster is a
 // count followed by up to kMaxClusterLights indices into lights[]. A cluster
-// that more lights reach lists the strongest there (lights.comp).
+// that more lights reach lists the strongest there and a sample of the rest
+// (lights.comp; ClusterLightScale).
 const uint kClustersX = 16u, kClustersY = 9u, kClustersZ = 24u;
 const uint kMaxClusterLights = 255u;
 layout(std430, set = 0, binding = 14) CLUSTER_ACCESS buffer Clusters { uint clusterLights[]; };
@@ -253,13 +254,10 @@ uint LightGridCell(uvec3 cell)
 }
 
 // The list of the light grid's cell around p (clamped into the scene's
-// bounds), as ClusterLight's base; kNone without the grid.
+// bounds), as ClusterLight's base. Ray-traced frames only (frame.lightGrid).
 uint LightGridBase(vec3 p)
 {
     float n = frame.lightGrid[0].w;
-    if (n <= 0.0) {
-        return kNone;
-    }
     vec3 lo = frame.lightGrid[0].xyz, size = max(frame.lightGrid[1].xyz - lo, vec3(1e-20));
     uvec3 cell = uvec3(clamp((p - lo) / size * n, vec3(0.0), vec3(n - 1.0)));
     return LightGridCell(cell) * (kMaxClusterLights + 1u);
@@ -268,5 +266,12 @@ uint LightGridBase(vec3 p)
 // Light k of the cluster whose list starts at `base`, for k < clusterLights[base].
 uint ClusterLight(uint base, uint k)
 {
-    return clusterLights[base + 1u + k];
+    return clusterLights[base + 1u + k] & 0xFFFFFFu;
+}
+
+// What light k's contribution is multiplied by: 1, or for a light an
+// overflowing cluster sampled, 1 / its probability (lights.comp).
+float ClusterLightScale(uint base, uint k)
+{
+    return exp2(float(clusterLights[base + 1u + k] >> 24u) * 0.125);
 }

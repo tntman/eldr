@@ -4443,16 +4443,16 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         vkCmdPipelineBarrier2(_cmd, &dep);
         pass("cullShadows");
     }
-    if (localLights > 0 && frame.clusteredLights) {
+    // Ray-traced frames always: their hits (rt_shade.glsl) look lights up in
+    // a grid over the scene's bounds instead of walking every local light.
+    if ((localLights > 0 && frame.clusteredLights) || rayTracing) {
         // Light clusters, read by the shading pass.
         if (localLights > kMaxClusterLights && !_clusterWarned) {
             _clusterWarned = true;
             std::fprintf(stderr, "Eldr: %u local lights; where more than %u reach a part of the view, the strongest of them light it\n",
                          unsigned(localLights), kMaxClusterLights);
         }
-        // Traced hits (rt_shade.glsl) look their lights up in a grid over
-        // the scene's bounds instead of walking every local light.
-        const bool grid = rayTracing && gpu.boundsMax[0] >= gpu.boundsMin[0];
+        const bool grid = rayTracing;
         for (int k = 0; k < 3; ++k) {
             fd.lightGrid[0][k] = gpu.boundsMin[k];
             fd.lightGrid[1][k] = gpu.boundsMax[k];

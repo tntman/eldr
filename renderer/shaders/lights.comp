@@ -14,18 +14,32 @@
 layout(local_size_x = 64) in;
 
 const int kImportanceBins = 24;
+// An overflowing cluster's list: its strongest lights, then about this many
+// sampled from the rest (the slack keeps the list from filling).
+const uint kStrongLights = 191u, kSampledLights = 48u;
 
 // How strongly the light reaches the box lo..hi: -1 not at all (past its
-// range, LightRange), else log2 of (range / distance)^2 to the box's
+// range, LightRange), else log2 of w = (range / distance)^2 to the box's
 // nearest point (its light there over the cutoff), 0 to kImportanceBins - 1.
-int Importance(Light light, vec3 lo, vec3 hi)
+int Importance(Light light, vec3 lo, vec3 hi, out float w)
 {
     vec3 q = clamp(light.position.xyz, lo, hi) - light.position.xyz;
     float range = LightRange(light), d2 = dot(q, q);
+    w = min(range * range / max(d2, 1e-20), exp2(float(kImportanceBins)));
     if (d2 > range * range) {
         return -1;
     }
-    return clamp(int(log2(range * range / max(d2, 1e-20))), 0, kImportanceBins - 1);
+    return clamp(int(log2(w)), 0, kImportanceBins - 1);
+}
+
+uint Hash(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
 }
 
 vec3 Unproject(vec3 ndc)
@@ -72,7 +86,8 @@ void main()
     uint count = 0u;
     bool overflow = false;
     for (uint i = 0u; i < frame.localLights.x; ++i) {
-        if (Importance(lights[frame.counts.x + i], lo, hi) >= 0) {
+        float w;
+        if (Importance(lights[frame.counts.x + i], lo, hi, w) >= 0) {
             if (count == kMaxClusterLights) {
                 overflow = true;
                 break;
@@ -82,33 +97,56 @@ void main()
         }
     }
     if (overflow) {
-        // More lights reach the cluster than its list holds: the strongest
-        // there (by factors of 2 of their light at its nearest point) take
-        // it; of the band where it cuts off, the first in light order.
+        // More lights reach the cluster than its list holds. The strongest
+        // there (by factors of 2 of their light at its nearest point; of the
+        // band where they cut off, the first in light order) take
+        // kStrongLights entries. The rest are sampled: each with a
+        // probability by its light there (about kSampledLights of them),
+        // different every sample, its light scaled by 1 / probability
+        // (ClusterLightScale), so the film converges to all of them.
         uint bins[kImportanceBins];
+        float weights[kImportanceBins];
         for (int b = 0; b < kImportanceBins; ++b) {
             bins[b] = 0u;
+            weights[b] = 0.0;
         }
         for (uint i = 0u; i < frame.localLights.x; ++i) {
-            int b = Importance(lights[frame.counts.x + i], lo, hi);
+            float w;
+            int b = Importance(lights[frame.counts.x + i], lo, hi, w);
             if (b >= 0) {
                 ++bins[b];
+                weights[b] += w;
             }
         }
         int cut = kImportanceBins - 1;
         uint above = 0u;  // lights in the bins above `cut`
-        while (cut > 0 && above + bins[cut] <= kMaxClusterLights) {
+        while (cut > 0 && above + bins[cut] <= kStrongLights) {
             above += bins[cut];
             --cut;
         }
-        uint quota = kMaxClusterLights - above;  // of the cut bin
+        uint quota = kStrongLights - above;  // of the cut bin
+        float rest = weights[cut] * float(bins[cut] - quota) / float(max(bins[cut], 1u));
+        for (int b = 0; b < cut; ++b) {
+            rest += weights[b];
+        }
+        uint seed = Hash(c * 9781u + Hash(frame.localLights.y));
         count = 0u;
         for (uint i = 0u; i < frame.localLights.x && count < kMaxClusterLights; ++i) {
-            int b = Importance(lights[frame.counts.x + i], lo, hi);
+            float w;
+            int b = Importance(lights[frame.counts.x + i], lo, hi, w);
             if (b > cut || (b == cut && quota > 0u)) {
                 quota -= b == cut ? 1u : 0u;
                 clusterLights[base + 1u + count] = frame.counts.x + i;
                 ++count;
+            } else if (b >= 0) {
+                // The probability rounded up to a power of 2^(1/8): its
+                // inverse fits the entry's top 8 bits exactly.
+                float p = min(float(kSampledLights) * w / max(rest, 1e-30), 1.0);
+                uint q = min(uint(floor(-8.0 * log2(p))), 255u);
+                if (float(Hash(seed ^ (i * 2654435761u)) >> 8) < exp2(-float(q) * 0.125) * 16777216.0) {
+                    clusterLights[base + 1u + count] = (frame.counts.x + i) | (q << 24);
+                    ++count;
+                }
             }
         }
     }

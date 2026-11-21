@@ -564,9 +564,9 @@ float SphereRegion(vec3 n, vec3 v, vec3 r, float a, vec3 toLight, float d, float
 // horizon-clipped sphere/disk illuminance; for rects the exact form factor
 // of the polygon clipped to the horizon; for cylinders' rect silhouettes
 // the form factor vector with Heitz's horizon approximation. Specular:
-// LightRegion's representative point.
+// LightRegion's representative point. scale: ClusterLightScale's.
 vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, vec3 f0, float a,
-                float NoV)
+                float NoV, float scale)
 {
     Light light = lights[index];
     vec3 toLight = light.position.xyz - p;
@@ -575,7 +575,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     if (window <= 0.0 || d <= 0.0 || !LightLinked(light, inLinkMask)) {
         return vec3(0.0);
     }
-    vec3 radiance = light.color.rgb * (window * window * EmitterClamp(light, diffuseColor)) * LightIes(light, p);
+    vec3 radiance = light.color.rgb * (window * window * EmitterClamp(light, diffuseColor) * scale) * LightIes(light, p);
     float cosOff = dot(-toLight / d, light.axis.xyz);
     if (light.shaping.z > 0.0) {
         radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
@@ -1391,11 +1391,11 @@ void main()
         uint count = clusterLights[base];
         for (uint k = 0u; k < count; ++k) {
             color += LocalLight(ClusterLight(base, k), inWorldPos, n, ng, v, diffuseColor, f0,
-                                a, NoV);
+                                a, NoV, ClusterLightScale(base, k));
         }
     } else {
         for (uint i = frame.counts.x; i < frame.counts.x + frame.localLights.x; ++i) {
-            color += LocalLight(i, inWorldPos, n, ng, v, diffuseColor, f0, a, NoV);
+            color += LocalLight(i, inWorldPos, n, ng, v, diffuseColor, f0, a, NoV, 1.0);
         }
     }
 
