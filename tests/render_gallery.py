@@ -262,6 +262,11 @@ def duration(sec):
     return "%.0f ms" % (sec * 1000) if sec < 1 else "%.1f s" % sec
 
 
+def load_time(sec):
+    """A load figure: Eldr logs its load to 0.1 s."""
+    return "< 0.1 s" if sec < 0.05 else duration(sec)
+
+
 def sampling(r, spp):
     return "%d film samples" % FILM if r.startswith("eldr") else "%d spp" % spp
 
@@ -288,7 +293,7 @@ def panel(row, rs, path):
             continue
         card = rs[r]["exr"][:-4] + "_card.png"
         line1 = "%d × %d · %s · %s%s" % (*row["res"], sampling(r, row["spp"]), duration(rs[r]["sec"]),
-                                         "" if rs[r].get("load") is None else " + %s load" % duration(rs[r]["load"]))
+                                         "" if rs[r].get("load") is None else " + %s load" % load_time(rs[r]["load"]))
         oiio(rs[r]["exr"], "--ch", "R,G,B", "--croptofull", "--resize", "%dx%d" % (w, h), "--clamp:min=0",
              "--colorconvert", "linear", "sRGB", "--clamp:min=0:max=1",
              "--create", "%dx%d" % (cw, ch), "3", "--fill:color=" + CARD["bg"], "%dx%d+0+0" % (cw, ch),
@@ -414,7 +419,7 @@ def table(rows, link):
            % " | ".join(LABEL[k] for k in keys), "|---|---|" + "---:|" * len(keys) + "---|"]
     for r in rows:
         t = ["-" if r.get(k + "_sec") is None else duration(r[k + "_sec"]) + (
-            "" if r.get(k + "_load") is None else " <sub>+ %s</sub>" % duration(r[k + "_load"])) for k in keys]
+            "" if r.get(k + "_load") is None else " <sub>+ %s</sub>" % load_time(r[k + "_load"])) for k in keys]
         b = " / ".join("%.2f×" % r[k + "_ratio"] if r.get(k + "_ratio") else "-" for k in keys[:3])
         out.append("| %s | %d / %d | %s | %s |" % (link(r), FILM, r["spp"], " | ".join(t), b))
     return "\n".join(out)
