@@ -31,7 +31,7 @@ over "cornell_box"
     {
         float inputs:radius = 0.05
         float inputs:intensity = 1
-        float inputs:exposure = 12
+        float inputs:exposure = 11
         color3f inputs:color = (1, 0.93, 0.82)
         double3 xformOp:translate = (2.6, 5, 5.1)
         uniform token[] xformOpOrder = ["xformOp:translate"]
@@ -89,6 +89,7 @@ over "cornell_box"
         uniform token subdivisionScheme = "none"
         rel material:binding = </cornell_box/glass>
         bool primvars:karma:object:causticsenable = 1 (interpolation = "constant")
+        float primvars:karma:object:causticsroughnessclamp = 0.05 (interpolation = "constant")
     }
     def Mesh "slab_bottom" (prepend apiSchemas = ["MaterialBindingAPI"])
     {
@@ -98,6 +99,7 @@ over "cornell_box"
         uniform token subdivisionScheme = "none"
         rel material:binding = </cornell_box/glass>
         bool primvars:karma:object:causticsenable = 1 (interpolation = "constant")
+        float primvars:karma:object:causticsroughnessclamp = 0.05 (interpolation = "constant")
     }
     def Mesh "slab_sides" (prepend apiSchemas = ["MaterialBindingAPI"])
     {
@@ -107,6 +109,7 @@ over "cornell_box"
         uniform token subdivisionScheme = "none"
         rel material:binding = </cornell_box/glass>
         bool primvars:karma:object:causticsenable = 1 (interpolation = "constant")
+        float primvars:karma:object:causticsroughnessclamp = 0.05 (interpolation = "constant")
     }
     def Mesh "wine_glass" (prepend apiSchemas = ["MaterialBindingAPI"])
     {
@@ -117,6 +120,7 @@ over "cornell_box"
         uniform token subdivisionScheme = "none"
         rel material:binding = </cornell_box/glass>
         bool primvars:karma:object:causticsenable = 1 (interpolation = "constant")
+        float primvars:karma:object:causticsroughnessclamp = 0.05 (interpolation = "constant")
     }
 }
 
@@ -124,7 +128,7 @@ over "Render"
 {
     over "Settings"
     {
-        # Karma: the casters' Enable Caustics (above), more samples for the small light seen through glass,
+        # Karma: the casters' Enable Caustics and a 0.05 roughness clamp (above), more samples for the small light seen through glass,
         # a colour limit that keeps the caustic paths, and enough refraction for the glass's four walls.
         int karma:global:pathtracedsamples = 2048
         float karma:global:colorlimit = 1000

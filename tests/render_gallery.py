@@ -81,7 +81,10 @@ DESCRIPTIONS = {
     "render_region": "A render region: dataWindowNDC (0.25, 0.15)-(0.75, 0.65) renders only that part of the frame.",
 }
 # What a card shows in Eldr that differs from Karma on purpose or by a known limitation.
-NOTES = {}
+NOTES = {"complex_caustics": "the default render has no ray tracing and so no caustics: the casters' glass casts a "
+                             "dark shadow, and screen-space GI misses the light bounced off the ceiling, out of view. "
+                             "The final render traces photons from the light, so the web and the glass's ring are "
+                             "sharp where Karma's caustics, traced from the camera, are still noisy."}
 # Feature scenes: (name, showcase folder, heading). Their eldr_default prim gets eldr_default.usda.
 FEATURES = [("material_lobes", "2026-10-30_22_material_lobes", "Material lobes"),
             ("subsurface", "2026-10-30_13_subsurface", "Skin, jade and leaves"),

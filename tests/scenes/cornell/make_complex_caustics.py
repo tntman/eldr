@@ -17,7 +17,8 @@ WAVES = [(0.8, 0.48, 10, 0.0), (0.8, 0.41, 70, 1.3), (0.8, 0.35, 130, 2.1), (0.8
 # Wine glass: base centre, bowl radius, rim/stem heights, wall thickness, segments around.
 GLASS = dict(x=4.0, z=3.4, bowl=0.42, stem_r=0.035, foot_r=0.36, foot_h=0.03, bowl_y=0.70, rim_y=1.65,
              inner_y=0.78, wall=0.016, segments=72)
-LIGHT = dict(pos=(2.6, 5.0, 5.1), radius=0.05, exposure=12.0)
+LIGHT = dict(pos=(2.6, 5.0, 5.1), radius=0.05, exposure=11.0)
+CLAMP = 0.05  # the casters' caustics roughness clamp (Karma's default 0.2 blurs the web)
 
 
 def fmt(v):
@@ -151,7 +152,8 @@ def mesh_usda(name, pts, nrm, counts, idx, material):
         s.append('        normal3f[] normals = [%s] (interpolation = "vertex")' % ", ".join(map(fmt, nrm)))
     s += ["        uniform token subdivisionScheme = \"none\"",
           "        rel material:binding = <%s>" % material,
-          '        bool primvars:karma:object:causticsenable = 1 (interpolation = "constant")', "    }"]
+          '        bool primvars:karma:object:causticsenable = 1 (interpolation = "constant")',
+          '        float primvars:karma:object:causticsroughnessclamp = %g (interpolation = "constant")' % CLAMP, "    }"]
     return "\n".join(s)
 
 
@@ -241,7 +243,7 @@ over "Render"
 {
     over "Settings"
     {
-        # Karma: the casters' Enable Caustics (above), more samples for the small light seen through glass,
+        # Karma: the casters' Enable Caustics and a 0.05 roughness clamp (above), more samples for the small light seen through glass,
         # a colour limit that keeps the caustic paths, and enough refraction for the glass's four walls.
         int karma:global:pathtracedsamples = 2048
         float karma:global:colorlimit = 1000
