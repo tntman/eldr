@@ -1461,6 +1461,16 @@ void main()
     // object's underside) is only darker, blotting object bases.
     float specularAO = max(clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0), diffuseAO);
     specular *= MultiBounce(specularAO, f0);
+    // Traced diffuse light (GI's probes or final gather) also tells how much
+    // of the dome the surroundings let through: the dome's reflection, which
+    // rough surfaces keep (traced reflections fade out over them), is
+    // dimmed to match, so a room's rough stone doesn't mirror the open sky.
+    // (A reflection probe's capture and a mirror's reflection are occluded already.)
+    if (Feature(kFeatureGi) && frame.envRadiance.w > 0.0 && !mirror && !Feature(kFeatureProbe)) {
+        const vec3 kLuminance = vec3(0.2126, 0.7152, 0.0722);
+        float open = dot(domeDiffuse, kLuminance);
+        specular *= open > 1e-6 ? min(dot(Lavg, kLuminance) / open, 1.0) : 1.0;
+    }
     // The mirror's planar reflection, elsewhere screen-space reflections:
     // they replace the dome (or probe) where they hit something; where the
     // hit is partly background the dome shows through.
