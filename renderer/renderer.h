@@ -432,8 +432,9 @@ public:
         // scene renders at this fraction of the width and height (at least
         // 0.25) and TAA reconstructs the full image into its full-size
         // history. The film and filmRestart always render at full size,
-        // as do frames with depth of field, a motion-blur shutter, lens
-        // distortion or extra AOVs (their passes are full size).
+        // as do frames with lens distortion or extra AOVs (their passes
+        // are full size). Post depth of field and motion blur work at the
+        // scene's size.
         float renderScale = 1.0f;
         // While the camera or the scene moves (not the frames after it
         // stops), the scale is at most this (eldr:movingRenderScale; 1: off).
@@ -623,11 +624,25 @@ public:
         // build (about half the memory). Skinned and displaced ones refit.
         bool rtCompaction = true;
         // Denoised glossy SSR (ssr.h, with ssr; not with rtReflections):
-        // one GGX-sampled ray per pixel, faded out from roughness 0.5 to 0.8,
+        // one GGX-sampled ray per pixel (traced after the shading pass), faded out from roughness 0.5 to 0.8,
         // through a ratio estimator, temporal reprojection through the
         // reflected point and a variance-guided bilateral filter. Off: one
         // mirror ray, faded out from roughness 0.3 to 0.6.
         bool ssrDenoise = false;
+        // While the camera or the scene moves (and the ramp after; never in
+        // the film) SSR traces one ray per block of this many pixels a side
+        // (1, 2; eldr:movingSsrResolution) after the shading pass, and each
+        // pixel takes its reflection from the blocks around it on its own
+        // surface (ssr.h). 1: every pixel, as when still.
+        uint32_t movingSsrResolution = 2;
+        // Denoised SSR's rays interleaved (eldr:ssrInterleave): of surfaces
+        // from perceptual roughness 0.2 up, each frame (film sample) traces
+        // one pixel of every 2 x 2 block, another each time; the denoiser's
+        // spatial pass gives the others their nearest traced neighbours'
+        // rays (ssr.h). Smoother surfaces trace every pixel. Off: every
+        // pixel, every frame. Slightly crisper rough reflections than off
+        // (fewer rays per estimate), so off by default.
+        bool ssrInterleave = false;
         // Jittered light shapes under the film (EEVEE's jittered soft
         // shadows): each sample renders the shadow maps from a point of the
         // light (the sun's disc, a rect's or disk's area, inside a

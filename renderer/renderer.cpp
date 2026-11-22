@@ -37,7 +37,7 @@ struct FrameData {
     float envWorldToLocal[16];
     float envRadiance[4];
     float prevViewProj[16];
-    float ssr[4];  // enabled, noise index, denoised, 1: unscale hits by last frame's splits
+    float ssr[4];  // enabled, noise index, SsrDenoise's mode (frame.glsl), 1: unscale hits by last frame's splits
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
@@ -3688,16 +3688,25 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // SSR's hits from the history's mip their footprint spans: built at
     // the end of each frame for the next.
     const bool ssrHitFilter = frame.ssr && frame.ssrHitFilter && frame.postProcess && frame.depthPrepass;
+    bool ssrInterleaved = false;
     _taa.SetHistoryMips(ssrHitFilter);
     if (frame.ssr && frame.postProcess && frame.depthPrepass && _historyValid) {
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
         fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
-        // Denoised: the shading pass writes its rays (traced reflections
-        // replace SSR where they apply: no denoiser then).
-        if (frame.ssrDenoise && !(tracedReflections && _rt && frame.depthPrepass)) {
-            fd.ssr[2] = 1.0f;
-            _ssr.Prepare();
+        // Denoised: the shading pass stores what its rays need and
+        // SsrDenoise traces them after it (traced reflections replace SSR
+        // where they apply: no denoiser then).
+        // eldr:movingSsrResolution: while moving (and the ramp after, never
+        // in the film) one ray per 2 x 2 block, traced after the shading
+        // pass (SsrDenoise; 2 denoised, 3 the mirror rays).
+        // eldr:ssrInterleave: else, denoised, the rougher surfaces trace
+        // one pixel of each block a frame, in turn (4).
+        const bool blocks = (moving || ramp) && !film && frame.movingSsrResolution > 1;
+        if ((frame.ssrDenoise || blocks) && !(tracedReflections && _rt && frame.depthPrepass)) {
+            ssrInterleaved = frame.ssrInterleave && !blocks;
+            fd.ssr[2] = ssrInterleaved ? 4.0f : !blocks ? 1.0f : frame.ssrDenoise ? 2.0f : 3.0f;
+            _ssr.Prepare(blocks ? 2 : 1, _setLayout);
         }
     }
 
@@ -3922,7 +3931,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // point: from the scrambled (0, 2)-sequence, as Sobol dimensions
         // 10 and 11 together leave half of an 8 x 8 grid's cells empty
         // after 64 samples.
-        ScrambledSobol(sobolIndex, kSeedSsrGgx, fd.sampleDims[2], 2);
+        // Interleaved, a pixel traces every fourth sample: its own sequence.
+        ScrambledSobol(ssrInterleaved ? sobolIndex / 4 : sobolIndex, kSeedSsrGgx, fd.sampleDims[2], 2);
     }
     if (localLights > 0) {
         _FitClusters(gpu, whole, &fd);
@@ -4922,9 +4932,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     vkCmdEndRendering(_cmd);
     pass("shading");
     if (ssrDenoise) {
-        _ssr.Resolve(_cmd, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
+        _ssr.Resolve(_cmd, _set, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
                      frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f, _aovs.SplitsView(), splits,
-                     fd.lightPath[1]);
+                     fd.lightPath[1], fd.ssr[2] != 3.0f,
+                     ssrInterleaved ? 1 + ((0x9C >> (2 * (sobolIndex % 4))) & 3) : 0);  // pixels 0, 3, 1, 2 in turn
         pass("ssrDenoise");
     }
     _ssrHistory = ssrDenoise;

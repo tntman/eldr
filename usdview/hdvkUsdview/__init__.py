@@ -34,7 +34,7 @@ PASSES = [
     ("giProbes", "Global illumination probes"),
     ("rayTracing", "Ray-traced shadows, reflections"),
     ("shading", "Shading"),
-    ("ssrDenoise", "Reflection denoise"),
+    ("ssrDenoise", "Reflection rays and denoise"),
     ("subsurface", "Subsurface scattering"),
     ("volumes", "Volumes"),
     ("translucency", "Translucency (refraction, OIT)"),

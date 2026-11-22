@@ -1,7 +1,8 @@
 """Headless check of HdVk's screen-space effects through Hydra: the
 thickness estimator (SSR at grazing angles), SSGI's visibility bitmask,
 denoised glossy SSR, its footprint-filtered hits, its precision, SSGI's energy and
-tile order, back-face hits and the denoiser's sample dimensions.
+tile order, back-face hits, the denoiser's sample dimensions, SSR below
+full resolution while moving and its interleaved rays.
 Run: usdenv.cmd python tests\\test_screenspace.py"""
 import os
 import sys
@@ -32,8 +33,9 @@ def expect(ok, what):
         print("FAIL:", what, file=sys.stderr)
 
 
-def render(stage, settings={}, frames=4):
-    """The stage through /cam with HdVk, as a QImage; no TAA (unless set), fixed exposure."""
+def render(stage, settings={}, frames=4, moving=False):
+    """The stage through /cam with HdVk, as a QImage; no TAA (unless set), fixed exposure.
+    moving: the camera backs off a millimetre a frame, so every frame counts as moving."""
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
     for key, value in {"eldr:taa": False, "eldr:autoExposure": False, "eldr:screenDicing": False, **settings}.items():
@@ -43,7 +45,10 @@ def render(stage, settings={}, frames=4):
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
     params = UsdImagingGL.RenderParams()
     params.clearColor = Gf.Vec4f(0, 0, 0, 1)
-    for _ in range(frames):
+    for i in range(frames):
+        if moving:
+            engine.SetCameraState(frustum.ComputeViewMatrix() * Gf.Matrix4d().SetTranslate(Gf.Vec3d(0, 0, -1e-3 * i)),
+                                  frustum.ComputeProjectionMatrix())
         engine.Render(stage.GetPseudoRoot(), params)
     image = fbo.toImage()
     del engine  # release GL resources while the context is still current
@@ -287,6 +292,54 @@ one = mean(render(stage, {**bright, "eldr:screenBackfaceScale": 1.0}), *sphere)
 off = mean(render(stage, {**bright, "eldr:screenBackface": False}), *sphere)
 print("SSR back-face hits: the sphere %.2f at scale 1, %.2f off" % (one, off))
 expect(abs(one - off) < 0.05, "SSR: back-face hits at scale 1 are as without the option")
+
+# SSR below full resolution while moving (eldr:movingSsrResolution): one
+# ray per 2 x 2 block of pixels, each pixel's reflection from the blocks
+# around it on its own surface. The polished floor's reflections stay
+# (close to a ray per pixel, far from no SSR); a still camera traces every
+# pixel whatever the setting; the denoised glossy floor stays smooth.
+stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "reflections.usda"))
+floor = (20, 220, 380, 330)
+
+
+def difference(a, b, x0, y0, x1, y1):
+    """Mean absolute 0..255 green difference over [x0, x1) x [y0, y1)."""
+    return sum(abs(a.pixelColor(x, y).green() - b.pixelColor(x, y).green())
+               for y in range(y0, y1) for x in range(x0, x1)) / ((x1 - x0) * (y1 - y0))
+
+
+full, half, none = (render(stage, {**bright, **s}, frames=6, moving=True)
+                    for s in ({"eldr:movingSsrResolution": 1}, {"eldr:movingSsrResolution": 2}, {"eldr:ssr": False}))
+blocks, missing = difference(half, full, *floor), difference(none, full, *floor)
+print("SSR while moving: the floor %.2f from a ray per pixel with a ray per block, %.2f without SSR" % (blocks, missing))
+expect(0 < blocks < 0.2 * missing, "eldr:movingSsrResolution 2 keeps the floor's reflections while moving")
+still = [render(stage, {**bright, "eldr:movingSsrResolution": r}) for r in (1, 2)]
+changed = sum(still[0].pixelColor(x, y) != still[1].pixelColor(x, y) for y in range(SIZE) for x in range(SIZE))
+print("SSR, still camera: %d pixels differ between eldr:movingSsrResolution 1 and 2" % changed)
+expect(changed == 0, "eldr:movingSsrResolution leaves a still camera's image alone")
+stage.GetPrimAtPath("/mtl/polished/pbr").GetAttribute("inputs:roughness").Set(0.25)
+dome = mean(render(stage, {"eldr:ssr": False, **bright}, frames=8, moving=True), *column)
+denoised = render(stage, {"eldr:ssrDenoise": True, "eldr:movingSsrResolution": 2, **bright}, frames=8, moving=True)
+shine, grain = mean(denoised, *column), roughness(denoised, 100, 240, 160, 300)
+print("glossy SSR while moving, a ray per block: the column's reflection %.1f (dome alone %.1f), grain %.2f" % (
+    shine, dome, grain))
+expect(shine > dome + 5, "denoised SSR below full resolution shows a glossy floor's reflections")
+expect(grain < 3, "denoised SSR below full resolution is smooth without TAA")
+
+# Interleaved glossy SSR rays (eldr:ssrInterleave): each film sample traces
+# one pixel in four of the glossy floor (roughness 0.25) and the denoiser
+# fills in the rest from the neighbours' rays, so a frame differs but the
+# film stays close (its rough reflections a little crisper).
+frames = [render(stage, {**glossy, "eldr:ssrInterleave": on}) for on in (False, True)]
+films = [render(stage, {**glossy, "eldr:taa": True, "eldr:ssrInterleave": on}, frames=70) for on in (False, True)]
+changed = sum(frames[0].pixelColor(x, y) != frames[1].pixelColor(x, y)
+              for y in range(floor[1], floor[3], 2) for x in range(floor[0], floor[2], 2))
+apart = difference(films[0], films[1], *floor)
+converged = [mean(f, *floor) for f in films]
+print("interleaved SSR rays: %d floor pixels (of a quarter) differ in a frame; films %.2f off, %.2f on, %.2f apart" % (
+    changed, converged[0], converged[1], apart))
+expect(changed > 100, "eldr:ssrInterleave traces a quarter of the glossy rays a frame")
+expect(abs(converged[0] - converged[1]) < 1.5 and apart < 2.5, "eldr:ssrInterleave's film stays close to a ray per pixel's")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
