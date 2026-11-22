@@ -186,6 +186,7 @@ void Reflections::RenderPlanars(const Scene &scene, const Renderer::Frame &frame
 {
     const Scene::Gpu &gpu = scene.GetGpu();
     planarMs = 0;
+    _planarsKept = false;
     // Renderers for the mirrors, theirs to keep while the mirror stays.
     const size_t mirrors =
         frame.planarReflections ? std::min<size_t>(gpu.mirrors.size(), std::max(frame.planarCount, 1u)) : 0;
@@ -203,6 +204,12 @@ void Reflections::RenderPlanars(const Scene &scene, const Renderer::Frame &frame
             _planars.push_back(planar);
         }
     }
+}
+
+bool Reflections::PlanarsSettled() const
+{
+    return std::all_of(_planarRenderers.begin(), _planarRenderers.end(),
+                       [](const std::unique_ptr<Renderer> &r) { return r && r->IsConverged(); });
 }
 
 void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, Probe &probe)

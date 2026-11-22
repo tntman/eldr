@@ -536,12 +536,22 @@ std::vector<uint8_t> BuildBlueNoise()
 // = 0.1; a still camera accumulates Frame::taaSamples.
 constexpr uint32_t kTaaMoving = 9;
 
+// HDVK_NO_SAMPLE_REUSE=1: every frame redoes the work the last one left the
+// same (skinning, the pools' copies for motion blur time samples, planar
+// mirrors' renders), for A/B tests.
+bool SampleReuse()
+{
+    static const bool on = !std::getenv("HDVK_NO_SAMPLE_REUSE");
+    return on;
+}
+
 // HDVK_TIMING: startup laps on stderr (the renderer's construction, a
 // first frame's passes over 5 ms: pipelines compile as they are first used).
 struct StartupLaps {
     bool on = std::getenv("HDVK_TIMING") != nullptr;
     const char *scope;
     std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    std::vector<std::pair<const char *, double>> *all = nullptr;  // every lap (HDVK_TIMING=3's totals)
     void operator()(const char *what, double minMs = 0.0)
     {
         const auto now = std::chrono::steady_clock::now();
@@ -549,11 +559,24 @@ struct StartupLaps {
         if (on && ms >= minMs) {
             std::fprintf(stderr, "HdVk %s: %s %.1f ms\n", scope, what, ms);
         }
+        if (all) {
+            all->push_back({what, ms});
+        }
         last = now;
     }
 };
 
 } // namespace
+
+void Renderer::Totals::Add(std::vector<std::pair<std::string, double>> &to, const char *name, double ms)
+{
+    auto it = std::find_if(to.begin(), to.end(), [&](const auto &e) { return e.first == name; });
+    if (it == to.end()) {
+        to.emplace_back(name, ms);
+    } else {
+        it->second += ms;
+    }
+}
 
 Renderer::Renderer(Device &device)
     : _dev(device)
@@ -653,6 +676,17 @@ Renderer::LoadTimes Renderer::TakeLoadTimes()
 
 Renderer::~Renderer()
 {
+    if (_totals.frames > 0) {
+        const double n = double(_totals.frames);
+        std::fprintf(stderr, "HdVk film totals: %u samples, per sample: cpu %.2f ms (of it waiting for the GPU %.2f), gpu %.2f ms\n",
+                     _totals.frames, _totals.cpuMs / n, _totals.waitMs / n, _totals.gpuMs / n);
+        for (const auto &[name, ms] : _totals.gpu) {
+            std::fprintf(stderr, "HdVk film gpu: %-28s %8.3f ms  %5.1f%%\n", name.c_str(), ms / n, 100.0 * ms / std::max(_totals.gpuMs, 1e-9));
+        }
+        for (const auto &[name, ms] : _totals.cpu) {
+            std::fprintf(stderr, "HdVk film cpu: %-28s %8.3f ms  %5.1f%%\n", name.c_str(), ms / n, 100.0 * ms / std::max(_totals.cpuMs, 1e-9));
+        }
+    }
     const auto t0 = std::chrono::steady_clock::now();
     auto lap = [&, last = t0](const char *what) mutable {
         const auto now = std::chrono::steady_clock::now();
@@ -3190,6 +3224,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     char lapScope[32];
     std::snprintf(lapScope, sizeof lapScope, "frame %d", ++renders);
     StartupLaps lap{(renders <= 3 || TimingLevel() >= 3) && std::getenv("HDVK_TIMING") != nullptr, lapScope, cpuStart};
+    std::vector<std::pair<const char *, double>> laps;
+    lap.all = TimingLevel() >= 3 ? &laps : nullptr;
     _frameColor = _linearColor = VK_NULL_HANDLE;
     if (frame.width != _outWidth || frame.height != _outHeight) {
         _Resize(frame.width, frame.height);
@@ -3431,6 +3467,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                : taa  ? _haltonIndex % std::clamp(frame.interactiveSamples, 1u, 256u) + 1
                                       : 0;
     _stats.sample = noiseSample;
+    if (TimingLevel() >= 3 && film && _filmSamples == 1) {
+        std::fprintf(stderr, "HdVk pools: %u instance slots, joints %.1f MB, blend shape weights %.1f MB, %u draws\n",
+                     gpu.instanceCapacity, double(gpu.jointsBytes) / 1048576.0,
+                     double(gpu.blendWeightsBytes) / 1048576.0, gpu.drawCount);
+    }
     const uint32_t sobolIndex = noiseSample > 0 ? noiseSample - 1 : 0;
     // The post motion blur: TAA's frames (interactive) when the camera or
     // the scene moved; under the film the time samples blur instead.
@@ -3512,8 +3553,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _denoiseUpload = false;
     }
     if (_denoiseState == 1) {
+        lap("film and lens setup", 5.0);
         _Denoise(frame.denoise, frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation));
         _denoiseState = 2;
+        lap("denoise (once a film)", 5.0);
     }
     // ponytail: a box shutter.
     float shutterU = 1.0f;
@@ -3600,13 +3643,30 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         CropToTile(frame, wholeFrame.viewProj, wholeFrame.invViewProj, true);
     }
     const Frame &whole = frame.tile[2] ? wholeFrame : frame;
+    lap("film and lens setup", 5.0);
     // Planar mirrors: rendered with this sample's camera (its shutter time,
     // its lens point), which shading looks them up by, and under time
     // samples with the scene at its time (Frame::planarMotionBlur).
+    // A film's samples see the mirrors alike unless the shutter or the lens
+    // moves the camera: their renders are kept from the third sample on
+    // (the first shows skinned meshes as the frame before posed them), once
+    // their levels of detail settled.
     if (_reflections) {
         const bool planarTime = timeSample && frame.planarMotionBlur;
-        _reflections->RenderPlanars(scene, frame, planarTime ? shutterT : -1.0f, planarTime && shutterCapture);
+        if (SampleReuse() && film && _filmSamples > 2 && !timeSample && !_shutterMoved && !lensJitter &&
+            _planarsRendered &&
+            _reflections->PlanarsSettled() &&
+            std::memcmp(frame.viewProj, _planarViewProj, sizeof(_planarViewProj)) == 0) {
+            _reflections->KeepPlanars();
+        } else {
+            _reflections->RenderPlanars(scene, frame, planarTime ? shutterT : -1.0f, planarTime && shutterCapture);
+            std::memcpy(_planarViewProj, frame.viewProj, sizeof(_planarViewProj));
+            _planarsRendered = true;
+        }
+    } else {
+        _planarsRendered = false;
     }
+    lap("planar mirrors", 5.0);
     std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
     if (taa) {
         sample = film ? _filmSamples : (_haltonIndex % taaSamples) + 1;
@@ -3893,6 +3953,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const std::vector<ShadowTile> shadowTiles =
         _PlanLocalShadows(gpu, whole, fd.clusters[3], rt.shadowLights + rtSuns, rtSlots - std::min(rtSuns, rtSlots),
                           cascadeUsers, shapeJitter ? shapeSample : nullptr, sunTiles);
+    lap("shadow fitting", 5.0);
     rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
                       (rt.gi ? kFeatureGi : 0) | (rt.caustics ? kFeatureCaustics : 0);
@@ -3976,6 +4037,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _dev.Destroy(_prevJoints);
         _prevJoints = _dev.CreateDeviceBuffer(gpu.jointsBytes,
                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        _prevJointsPools = {};
     }
     _prevJointsSource = gpu.joints;
     // The camera's level of detail per instance slot, kept across frames
@@ -3999,6 +4061,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
+    lap("frame data", 5.0);
     const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction || rt.caustics || rt.subsurface;
     if (rayTracing) {
         _rt->StartEarly();  // with the rest of the early compiles (refraction, photons)
@@ -4011,6 +4074,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
         rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
         rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
+        lap("ray tracing instances", 5.0);
         const auto rtStart = std::chrono::steady_clock::now();
         _rt->WaitPipelines(rt);
         const auto bvhStart = std::chrono::steady_clock::now();
@@ -4020,7 +4084,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     } else if (_rt) {
         _rt->Release();  // nothing traced: no acceleration structures either
     }
-    lap("frame data, ray tracing", 5.0);
+    lap("ray tracing prepare", 5.0);
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     // Motion blur time samples: room for the capture (shutter.comp) and for
     // this frame's pools, saved while a sample moves them.
@@ -4032,6 +4096,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                 _dev.Destroy(b);
                 b = _dev.CreateDeviceBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                                        VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                _savedPools = {};
             }
         };
         if (shutterCapture) {
@@ -4227,7 +4292,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             vkCmdWriteTimestamp2(_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _timestamps, uint32_t(_passes.size()));
         }
     };
-    for (const Reflections::Planar &planar : _reflections ? _reflections->Planars() : std::vector<Reflections::Planar>{}) {
+    for (const Reflections::Planar &planar : _reflections && !_reflections->PlanarsKept() ? _reflections->Planars()
+                                                                                          : std::vector<Reflections::Planar>{}) {
         // Rendered (and left for readback) by the reflections' renderers.
         ImageBarrier(_cmd, planar.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
@@ -4271,7 +4337,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             vkCmdPipelineBarrier2(_cmd, &d);
         };
         auto shutterPoses = [&](VkBuffer from, VkDeviceSize bytes, VkBuffer poses,
-                                const std::vector<VkBufferCopy> &ranges, std::initializer_list<VkBuffer> to) {
+                                const std::vector<VkBufferCopy> &ranges, const std::vector<VkBuffer> &to) {
             const VkBufferCopy all{0, 0, bytes};
             for (VkBuffer b : to) {
                 vkCmdCopyBuffer(_cmd, from, b, 1, &all);
@@ -4282,9 +4348,17 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                 vkCmdCopyBuffer(_cmd, poses, b, uint32_t(ranges.size()), ranges.data());
             }
         };
-        if (prevJoints && !shutterJoints) {
+        // A film's samples find the pools as the last one did (a time
+        // sample's move is put back after its frame): the joints skin.comp
+        // wrote stand, and so do the copies of what stayed (below).
+        const Pools pools{gpu.sceneId, gpu.version, gpu.instances, gpu.joints, gpu.blendWeights};
+        const bool reuse = SampleReuse();
+        const bool skinned = reuse && pools == _skinnedPools;
+        if (prevJoints && !shutterJoints && !(skinned && pools == _prevJointsPools && _prevJointsKind == 1)) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};
             vkCmdCopyBuffer(_cmd, gpu.joints, _prevJoints.buffer, 1, &all);
+            _prevJointsPools = pools;
+            _prevJointsKind = skinned ? 1 : 0;
         }
         // Motion blur time samples: the motion this frame starts from last
         // frame's joints and blend shape weights (sampled motion: the shutter's).
@@ -4318,8 +4392,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // and every vertex stage (reflection renders reuse the last frame's).
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _skinPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
-        if (frame.skinning) {
+        if (frame.skinning && !skinned) {
             vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+            _skinnedPools = pools;
         }
         VkMemoryBarrier2 jointsBuilt{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         jointsBuilt.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
@@ -4329,17 +4404,23 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         dep.pMemoryBarriers = &jointsBuilt;
         vkCmdPipelineBarrier2(_cmd, &dep);
         if (shutterJoints) {
-            barrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-            if (shutterCapture && _shutter.joints) {
-                shutterPoses(gpu.joints, gpu.jointsBytes, gpu.shutterJoints, gpu.shutterJointRanges,
-                             {_prevJoints.buffer, _shutterJoints.buffer});
-            } else {
-                shutterPoses(gpu.joints, gpu.jointsBytes, gpu.shutterJoints, gpu.shutterJointRanges,
-                             {_prevJoints.buffer});
+            std::vector<VkBuffer> to;
+            const bool posed = reuse && pools == _skinnedPools;  // the pool holds these pools' joints
+            if (!(posed && pools == _prevJointsPools && _prevJointsKind == 2)) {
+                to.push_back(_prevJoints.buffer);
+                _prevJointsPools = pools;
+                _prevJointsKind = posed ? 2 : 0;
             }
-            barrier(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
+            if (shutterCapture && _shutter.joints) {
+                to.push_back(_shutterJoints.buffer);
+            }
+            if (!to.empty()) {
+                barrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                        VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+                shutterPoses(gpu.joints, gpu.jointsBytes, gpu.shutterJoints, gpu.shutterJointRanges, to);
+                barrier(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
+            }
         }
         pass("skinning");
 
@@ -4359,7 +4440,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
                                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
             dep.pMemoryBarriers = &barrier;
-            if (shutterMove) {
+            // Saved by an earlier sample of these pools: still what they hold.
+            const bool posed = reuse && pools == _skinnedPools;
+            if (shutterMove && posed && pools == _savedPools) {
+                vkCmdPipelineBarrier2(_cmd, &dep);
+            } else if (shutterMove) {
+                _savedPools = posed ? pools : Pools{};
                 vkCmdPipelineBarrier2(_cmd, &dep);  // skin.comp's joints, before they are saved
                 const VkBufferCopy instances{0, 0, instanceBytes};
                 vkCmdCopyBuffer(_cmd, gpu.instances, _savedInstances.buffer, 1, &instances);
@@ -4393,6 +4479,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                 params.weights = _shutter.weights ? uint32_t(gpu.blendWeightsBytes / sizeof(float)) : 0u;
                 vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(params), &params);
                 vkCmdDispatch(_cmd, (std::max(gpu.instanceCapacity, params.weights) + 63) / 64, 1, 1);
+                if (_shutter.joints && gpu.jointsBytes > 0) {  // the joints, a matrix per invocation
+                    params.capture = 2;
+                    params.instances = uint32_t(gpu.jointsBytes / (16 * sizeof(float)));
+                    vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(params), &params);
+                    vkCmdDispatch(_cmd, (params.instances + 63) / 64, 1, 1);
+                }
             }
             // Culling, rays (TLAS, skinned BLASes) and every pass read the moved pools.
             barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
@@ -5368,6 +5460,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
         barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
         vkCmdPipelineBarrier2(_cmd, &restore);
+        pass("shutterRestore");
     }
     _shutterMoved = shutterMove;
 
@@ -5389,6 +5482,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _stats.accelerationStructureBytes = _rt ? _rt->AccelerationStructureBytes() : 0;
     _stats.rtPipelineStarts = _rt ? _rt->PipelineStarts() : 0;
     _stats.film = film;
+    _totalsFrame = TimingLevel() >= 3 && film && _filmSamples > 2;
     if (defer) {
         _deferredOutputs = true;
     } else {
@@ -5403,6 +5497,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
     lap("submit and readback", 5.0);
+    if (_totalsFrame && !defer) {
+        for (const auto &[name, ms] : laps) {
+            Totals::Add(_totals.cpu, name, ms);
+        }
+        _totals.cpuMs += _stats.cpuMs;
+    }
 }
 
 // The converged film's image (the TAA resolve, last frame's) to the CPU,
@@ -5516,6 +5616,14 @@ void Renderer::_WaitInFlight()
         if (ms > 0) {
             _stats.passMs.insert(_stats.passMs.begin(), {name, ms});
             _stats.gpuMs += ms;
+        }
+    }
+    if (_totalsFrame) {
+        ++_totals.frames;
+        _totals.gpuMs += _stats.gpuMs;
+        _totals.waitMs += _stats.waitMs;
+        for (const auto &[name, ms] : _stats.passMs) {
+            Totals::Add(_totals.gpu, name, ms);
         }
     }
     // Adaptive film: converged once no pixel took a sample (every pixel
