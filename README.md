@@ -16,7 +16,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-brightgreen?logo=apache&logoColor=white" alt="License: Apache 2.0"></a>
   &nbsp;&nbsp;
   <!-- Docs -->
-  <a href="https://tntman.github.io/eldr/"><img src="https://img.shields.io/github/actions/workflow/status/tntman/eldr/docs.yml?branch=step1-plugin-skeleton&label=Docs&logo=github-actions&logoColor=white" alt="Docs build"></a>
+  <a href="https://tntman.github.io/eldr/"><img src="https://img.shields.io/github/actions/workflow/status/tntman/eldr/docs.yml?branch=main&label=Docs&logo=github-actions&logoColor=white" alt="Docs build"></a>
   &nbsp;&nbsp;
   <!-- Platform -->
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Platform: Windows">
