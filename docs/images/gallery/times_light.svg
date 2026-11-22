@@ -148,8 +148,8 @@
 <g><title>Subdivision surfaces, Karma XPU: 14.8 s</title><polygon points="502.3,479.6 507.3,488.8 497.4,488.8" fill="#8a4fd0"/></g>
 <g><title>Subdivision surfaces, Karma CPU: 47.9 s</title><rect x="564.4" y="480.9" width="8.1" height="8.1" fill="#6e7781"/></g>
 <text x="210" y="503.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">Subsurface scattering</text>
-<g><title>Subsurface scattering, Eldr raster + SSGI: 872 ms</title><circle cx="342.3" cy="503.0" r="4.5" fill="#2f6fd0"/></g>
-<g><title>Subsurface scattering, Eldr ray traced: 3.3 s</title><polygon points="417.9,497.4 422.8,503.0 417.9,508.6 412.9,503.0" fill="#d9732b"/></g>
+<g><title>Subsurface scattering, Eldr raster + SSGI: 875 ms</title><circle cx="342.5" cy="503.0" r="4.5" fill="#2f6fd0"/></g>
+<g><title>Subsurface scattering, Eldr ray traced: 3.8 s</title><polygon points="425.8,497.4 430.8,503.0 425.8,508.6 420.9,503.0" fill="#d9732b"/></g>
 <g><title>Subsurface scattering, Karma XPU: 21.9 s</title><polygon points="524.3,497.6 529.2,506.8 519.3,506.8" fill="#8a4fd0"/></g>
 <g><title>Subsurface scattering, Karma CPU: 55.6 s</title><rect x="572.8" y="498.9" width="8.1" height="8.1" fill="#6e7781"/></g>
 <rect x="0" y="512.0" width="770" height="18" fill="#d0d7de" opacity="0.35"/>
@@ -192,8 +192,8 @@
 <g><title>Material lobes, Karma XPU: 2.1 s</title><polygon points="390.8,623.6 395.8,632.8 385.9,632.8" fill="#8a4fd0"/></g>
 <g><title>Material lobes, Karma CPU: 8.1 s</title><rect x="463.8" y="625.0" width="8.1" height="8.1" fill="#6e7781"/></g>
 <text x="210" y="647.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">Skin, jade and leaves</text>
-<g><title>Skin, jade and leaves, Eldr raster + SSGI: 1.7 s</title><circle cx="380.2" cy="647.0" r="4.5" fill="#2f6fd0"/></g>
-<g><title>Skin, jade and leaves, Eldr ray traced: 3.6 s</title><polygon points="423.0,641.4 428.0,647.0 423.0,652.6 418.1,647.0" fill="#d9732b"/></g>
+<g><title>Skin, jade and leaves, Eldr raster + SSGI: 1.7 s</title><circle cx="381.2" cy="647.0" r="4.5" fill="#2f6fd0"/></g>
+<g><title>Skin, jade and leaves, Eldr ray traced: 6.0 s</title><polygon points="450.8,641.4 455.7,647.0 450.8,652.6 445.8,647.0" fill="#d9732b"/></g>
 <g><title>Skin, jade and leaves, Karma XPU: 18.4 s</title><polygon points="514.5,641.6 519.5,650.8 509.6,650.8" fill="#8a4fd0"/></g>
 <g><title>Skin, jade and leaves, Karma CPU: 29.9 s</title><rect x="537.7" y="643.0" width="8.1" height="8.1" fill="#6e7781"/></g>
 <rect x="0" y="656.0" width="770" height="18" fill="#d0d7de" opacity="0.35"/>
@@ -236,8 +236,8 @@
 <g><title>Displacement shaders, Karma XPU: 1.6 s</title><polygon points="377.2,767.6 382.2,776.8 372.3,776.8" fill="#8a4fd0"/></g>
 <g><title>Displacement shaders, Karma CPU: 5.1 s</title><rect x="438.3" y="769.0" width="8.1" height="8.1" fill="#6e7781"/></g>
 <text x="210" y="791.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">MaterialX BSDF graphs</text>
-<g><title>MaterialX BSDF graphs, Eldr raster + SSGI: 3.1 s</title><circle cx="413.9" cy="791.0" r="4.5" fill="#2f6fd0"/></g>
-<g><title>MaterialX BSDF graphs, Eldr ray traced: 9.7 s</title><polygon points="478.2,785.4 483.1,791.0 478.2,796.6 473.2,791.0" fill="#d9732b"/></g>
+<g><title>MaterialX BSDF graphs, Eldr raster + SSGI: 3.1 s</title><circle cx="414.3" cy="791.0" r="4.5" fill="#2f6fd0"/></g>
+<g><title>MaterialX BSDF graphs, Eldr ray traced: 10.1 s</title><polygon points="480.6,785.4 485.6,791.0 480.6,796.6 475.7,791.0" fill="#d9732b"/></g>
 <g><title>MaterialX BSDF graphs, Karma XPU: 5.4 s</title><polygon points="445.5,785.6 450.5,794.8 440.6,794.8" fill="#8a4fd0"/></g>
 <g><title>MaterialX BSDF graphs, Karma CPU: 30.3 s</title><rect x="538.6" y="787.0" width="8.1" height="8.1" fill="#6e7781"/></g>
 <rect x="0" y="800.0" width="770" height="18" fill="#d0d7de" opacity="0.35"/>
@@ -341,8 +341,8 @@
 <g><title>Cryptomatte, Karma CPU: 17.9 s</title><rect x="508.8" y="1111.0" width="8.1" height="8.1" fill="#6e7781"/></g>
 <rect x="0" y="1124.0" width="770" height="18" fill="#d0d7de" opacity="0.35"/>
 <text x="210" y="1133.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">AOVs and light groups</text>
-<g><title>AOVs and light groups, Eldr raster + SSGI: 2.6 s</title><circle cx="404.5" cy="1133.0" r="4.5" fill="#2f6fd0"/></g>
-<g><title>AOVs and light groups, Eldr ray traced: 6.1 s</title><polygon points="452.1,1127.4 457.1,1133.0 452.1,1138.6 447.2,1133.0" fill="#d9732b"/></g>
+<g><title>AOVs and light groups, Eldr raster + SSGI: 2.6 s</title><circle cx="405.0" cy="1133.0" r="4.5" fill="#2f6fd0"/></g>
+<g><title>AOVs and light groups, Eldr ray traced: 6.3 s</title><polygon points="454.1,1127.4 459.1,1133.0 454.1,1138.6 449.2,1133.0" fill="#d9732b"/></g>
 <g><title>AOVs and light groups, Karma XPU: 100.7 s</title><polygon points="610.4,1127.6 615.3,1136.8 605.4,1136.8" fill="#8a4fd0"/></g>
 <g><title>AOVs and light groups, Karma CPU: 18.5 s</title><rect x="510.8" y="1129.0" width="8.1" height="8.1" fill="#6e7781"/></g>
 <text x="210" y="1151.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">Tiled rendering</text>

@@ -70,7 +70,7 @@ endforeach()
 # crashes. --compact-ids keeps the result's bound small (~66k).
 get_filename_component(vulkan_bin ${Vulkan_GLSLC_EXECUTABLE} DIRECTORY)
 find_program(SPIRV_OPT spirv-opt HINTS ${vulkan_bin} REQUIRED)
-foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit
+foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt_subsurface.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit
         rt_shadow.rahit)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}

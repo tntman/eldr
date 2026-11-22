@@ -3040,7 +3040,8 @@ void Renderer::_RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewP
 // lobe only, into Subsurface's targets (testing the opaque depth), which
 // it then blurs into the colour.
 void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
-                                 const float *invViewProj, VkRenderingAttachmentInfo depth, bool splits)
+                                 const float *invViewProj, VkRenderingAttachmentInfo depth, bool splits,
+                                 VkImageView traced)
 {
     // The opaque pass's ids, velocity and colour are written before this
     // pass loads (and the blur adds to) them.
@@ -3095,7 +3096,7 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
     vkCmdEndRendering(_cmd);
     _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits,
                      std::max(frame.directIntensity, 0.0f), std::max(frame.indirectIntensity, 0.0f),
-                     frame.subsurfaceBurley, _stats.sample);
+                     frame.subsurfaceBurley, _stats.sample, traced);
 }
 
 void Renderer::CropToTile(const Frame &frame, float *viewProj, float *invViewProj, bool undo)
@@ -3686,6 +3687,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
                     frame.rtRefraction;
     rt.refractionBounces = frame.rtRefractionBounces;
+    // Traced subsurface, for scenes with subsurface meshes (as the blur).
+    rt.subsurface = rtScene && frame.depthPrepass && frame.subsurface && !gpu.subsurface.empty() && frame.rtSubsurface;
     rt.reflectionBounces = frame.rtReflectionBounces;
     rt.hitShadows = frame.rtHitShadows;
     rt.refractionDisplacement = frame.rtRefractionDisplacement;
@@ -3806,7 +3809,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.compaction = frame.rtCompaction;
     // Further suns are traced only where something the user turned on
     // traces already (never starting ray tracing of their own).
-    const bool rtOther = rt.reflections || rt.refraction || rt.gi || rt.caustics;
+    const bool rtOther = rt.reflections || rt.refraction || rt.gi || rt.caustics || rt.subsurface;
     const bool traceSuns = extraSuns && frame.rtExtraSunShadows && rtScene && frame.depthPrepass &&
                            (tracedShadows || rtOther);
     rt.shadows = (rtScene && frame.depthPrepass && tracedShadows) || traceSuns;
@@ -3995,7 +3998,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
-    const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction || rt.caustics;
+    const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction || rt.caustics || rt.subsurface;
     if (rayTracing) {
         _rt->StartEarly();  // with the rest of the early compiles (refraction, photons)
     }
@@ -4815,7 +4818,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     _ssrHistory = ssrDenoise;
     if (fd.features[0] & kFeatureSubsurface) {
-        _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt, splits);
+        _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt, splits,
+                          rt.subsurface ? _rt->SubsurfaceView() : VK_NULL_HANDLE);
         pass("subsurface");
     }
     // Traced refraction replaces what's behind the glass it finds: there the

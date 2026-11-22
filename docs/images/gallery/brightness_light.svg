@@ -128,7 +128,7 @@
 <g><title>Subdivision surfaces, Karma XPU: 1.02×</title><polygon points="573.0,479.6 578.0,488.8 568.1,488.8" fill="#8a4fd0"/></g>
 <text x="210" y="503.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">Subsurface scattering</text>
 <g><title>Subsurface scattering, Eldr raster + SSGI: 0.69×</title><circle cx="460.5" cy="503.0" r="4.5" fill="#2f6fd0"/></g>
-<g><title>Subsurface scattering, Eldr ray traced: 1.01×</title><polygon points="570.2,497.4 575.2,503.0 570.2,508.6 565.3,503.0" fill="#d9732b"/></g>
+<g><title>Subsurface scattering, Eldr ray traced: 1.03×</title><polygon points="578.7,497.4 583.6,503.0 578.7,508.6 573.7,503.0" fill="#d9732b"/></g>
 <g><title>Subsurface scattering, Karma XPU: 1.02×</title><polygon points="572.8,497.6 577.8,506.8 567.9,506.8" fill="#8a4fd0"/></g>
 <rect x="0" y="512.0" width="770" height="18" fill="#d0d7de" opacity="0.35"/>
 <text x="210" y="521.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">UV sets</text>
@@ -163,8 +163,8 @@
 <g><title>Material lobes, Eldr ray traced: 0.98×</title><polygon points="558.0,623.4 563.0,629.0 558.0,634.6 553.1,629.0" fill="#d9732b"/></g>
 <g><title>Material lobes, Karma XPU: 0.98×</title><polygon points="560.4,623.6 565.4,632.8 555.5,632.8" fill="#8a4fd0"/></g>
 <text x="210" y="647.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">Skin, jade and leaves</text>
-<g><title>Skin, jade and leaves, Eldr raster + SSGI: 0.95×</title><circle cx="547.7" cy="647.0" r="4.5" fill="#2f6fd0"/></g>
-<g><title>Skin, jade and leaves, Eldr ray traced: 0.90×</title><polygon points="531.4,641.4 536.4,647.0 531.4,652.6 526.5,647.0" fill="#d9732b"/></g>
+<g><title>Skin, jade and leaves, Eldr raster + SSGI: 0.95×</title><circle cx="550.7" cy="647.0" r="4.5" fill="#2f6fd0"/></g>
+<g><title>Skin, jade and leaves, Eldr ray traced: 0.94×</title><polygon points="545.9,641.4 550.8,647.0 545.9,652.6 540.9,647.0" fill="#d9732b"/></g>
 <g><title>Skin, jade and leaves, Karma XPU: 1.01×</title><polygon points="571.3,641.6 576.2,650.8 566.3,650.8" fill="#8a4fd0"/></g>
 <rect x="0" y="656.0" width="770" height="18" fill="#d0d7de" opacity="0.35"/>
 <text x="210" y="665.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">Caustics</text>
@@ -200,7 +200,7 @@
 <g><title>Displacement shaders, Karma XPU: 0.99×</title><polygon points="564.3,767.6 569.3,776.8 559.4,776.8" fill="#8a4fd0"/></g>
 <text x="210" y="791.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">MaterialX BSDF graphs</text>
 <g><title>MaterialX BSDF graphs, Eldr raster + SSGI: 0.98×</title><circle cx="561.3" cy="791.0" r="4.5" fill="#2f6fd0"/></g>
-<g><title>MaterialX BSDF graphs, Eldr ray traced: 1.00×</title><polygon points="568.0,785.4 572.9,791.0 568.0,796.6 563.0,791.0" fill="#d9732b"/></g>
+<g><title>MaterialX BSDF graphs, Eldr ray traced: 1.00×</title><polygon points="568.3,785.4 573.3,791.0 568.3,796.6 563.4,791.0" fill="#d9732b"/></g>
 <g><title>MaterialX BSDF graphs, Karma XPU: 0.91×</title><polygon points="534.2,785.6 539.1,794.8 529.2,794.8" fill="#8a4fd0"/></g>
 <rect x="0" y="800.0" width="770" height="18" fill="#d0d7de" opacity="0.35"/>
 <text x="210" y="809.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">MaterialX and Karma nodes</text>
@@ -286,7 +286,7 @@
 <rect x="0" y="1124.0" width="770" height="18" fill="#d0d7de" opacity="0.35"/>
 <text x="210" y="1133.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">AOVs and light groups</text>
 <g><title>AOVs and light groups, Eldr raster + SSGI: 0.97×</title><circle cx="554.6" cy="1133.0" r="4.5" fill="#2f6fd0"/></g>
-<g><title>AOVs and light groups, Eldr ray traced: 0.96×</title><polygon points="551.3,1127.4 556.3,1133.0 551.3,1138.6 546.4,1133.0" fill="#d9732b"/></g>
+<g><title>AOVs and light groups, Eldr ray traced: 0.97×</title><polygon points="556.3,1127.4 561.2,1133.0 556.3,1138.6 551.3,1133.0" fill="#d9732b"/></g>
 <g><title>AOVs and light groups, Karma XPU: 1.02×</title><polygon points="574.7,1127.6 579.7,1136.8 569.8,1136.8" fill="#8a4fd0"/></g>
 <text x="210" y="1151.0" text-anchor="end" dominant-baseline="middle" fill="#1f2328">Tiled rendering</text>
 <g><title>Tiled rendering, Eldr raster + SSGI: 0.69×</title><circle cx="460.4" cy="1151.0" r="4.5" fill="#2f6fd0"/></g>

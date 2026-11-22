@@ -1,0 +1,153 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
+#define RAY_TRACING
+#include "frame.glsl"
+#include "lights.glsl"
+#include "scene.glsl"
+#include "material.glsl"
+#include "rt.glsl"
+#include "gi.glsl"
+#include "volume.glsl"
+#include "rt_shade.glsl"
+#include "rt_evaluate.glsl"
+
+// Traced subsurface (RayTracing::Work::subsurface), per pixel for
+// subsurface_blur.frag: a ray through the pixel (the rasterizer's jittered
+// camera) finds the surface the prepass drew; where that is a thick
+// subsurface material, its subsurface lobe's light is a random walk inside
+// the mesh (a random walk, as Karma, Arnold and Cycles):
+//   - into the surface on a cosine lobe around the inward normal;
+//   - per channel the radius is the mean free path (extinction 1 / radius)
+//     and the single-scattering albedo is van de Hulst's inversion of the
+//     subsurface colour A, so a thick flat slab reflects A
+//     (within 1% for A 0.35-0.9 in a numerical walk; Chiang et al. 2016's fit
+//     gives 0.87 for 0.9);
+//   - flights drawn from one channel's extinction, picked by the path's
+//     throughput (spectral MIS over the three), isotropic scattering;
+//   - up to rt.subsurface.x steps; the last flies to the surface, absorbed
+//     but not scattered on the way;
+//   - where it leaves, the light of a white diffuse surface there
+//     (ShadeHit: every light shadowed by a ray, the dome or GI probes).
+// rgb: that light times the subsurface weight (and 1 - metallic) and what
+// the specular layer lets through, what the subsurface pass's light stands
+// for; a: 1 where a walk ran, 0
+// elsewhere (thin walls, other materials: the blur keeps its own there).
+// ponytail: any surface ends a walk (an overlapping mesh too); no
+// boundary Fresnel inside (index matched); one walk per pixel and sample
+// (the film averages them); not scaled by the light path intensities
+// (Frame::directIntensity, indirectIntensity) the blurred light carries.
+layout(set = 1, binding = 19, rgba16f) uniform writeonly image2D rtSubsurfaceImage;
+layout(set = 0, binding = 13) uniform sampler2D sceneDepth;  // the prepass depth, window [0, 1]
+
+// TraceMask up to tMax.
+void TraceReach(vec3 origin, vec3 dir, uint mask, float tMax)
+{
+    hit.t = 0.0;
+    traceRayEXT(tlas, gl_RayFlagsNoneEXT, mask, 0, 0, 0, origin, 0.0, dir, tMax, 0);
+}
+
+vec4 Uniform4(uvec3 seed, uint k)
+{
+    uvec3 a = Pcg3d(seed + uvec3(0u, 0u, 0x9E3779B9u * (k + 1u)));
+    uvec3 b = Pcg3d(a ^ uvec3(0x68E31DA4u));
+    return vec4(uvec4(a.xy, b.xy) >> 8u) * (1.0 / 16777216.0);
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    float depth = texelFetch(sceneDepth, pixel, 0).r;
+    if (depth >= 1.0) {
+        imageStore(rtSubsurfaceImage, pixel, vec4(0.0));
+        return;
+    }
+    vec2 ndc = (vec2(pixel) + 0.5) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+    vec4 nearPoint = frame.invViewProj * vec4(ndc, -1.0, 1.0), farPoint = frame.invViewProj * vec4(ndc, 1.0, 1.0);
+    vec3 origin = nearPoint.xyz / nearPoint.w;
+    vec3 dir = normalize(farPoint.xyz / farPoint.w - origin);
+    vec4 q = frame.invViewProj * vec4(ndc, depth * 2.0 - 1.0, 1.0);
+    float rasterT = distance(origin, q.xyz / q.w);
+    float cone = 1.0 / frame.viewport.y;
+    hit.t = cone;
+    traceRayEXT(tlas, gl_RayFlagsNoneEXT, kRtMaskCamera, 0, 0, 0, origin, 0.0, dir, rasterT * 1.02 + 1e-4, 0);
+    // Only on the prepass's own surface (2%: depth precision).
+    uint material = hit.t >= 0.0 ? draws[hit.slot].material : kNoMaterial;
+    if (material == kNoMaterial || abs(hit.t - rasterT) > 0.02 * rasterT ||
+        (materials[material].subsurface.w <= 0.0 && materials[material].program.y == 0u)) {
+        imageStore(rtSubsurfaceImage, pixel, vec4(0.0));
+        return;
+    }
+    Surface s = Evaluate(dir, cone);
+    Material m = s.m;
+    if (m.subsurface.w <= 0.0 || m.refraction.y != 0.0) {  // no subsurface, or thin walled (the blur's)
+        imageStore(rtSubsurfaceImage, pixel, vec4(0.0));
+        return;
+    }
+    float weight = m.subsurface.w * (1.0 - clamp(hit.metallic, 0.0, 1.0));
+    // What the specular layer above takes, as the subsurface pass's light
+    // has it (brdf.glsl SetupBase): 1 - its directional albedo towards the
+    // camera, Karis' analytic fit as ShadeHit's, F0 by the ior, specular
+    // weight and colour.
+    float f = (m.refraction.x - 1.0) / (m.refraction.x + 1.0);
+    vec3 f0 = clamp(f * f * max(m.specular.rgb, 0.0), 0.0, 1.0);
+    vec4 kr = s.roughness * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+    float a004 = min(kr.x * kr.x, exp2(-9.28 * max(dot(s.n, -dir), 0.0))) * kr.x + kr.y;
+    vec3 layered = weight * (1.0 - clamp(max(m.specular.w, 0.0) * (f0 * (-1.04 * a004 + kr.z) + (1.04 * a004 + kr.w)),
+                                         0.0, 1.0));
+
+    // Van de Hulst's single-scattering albedo for the multiple-scattering
+    // albedo A (a semi-infinite slab's total reflectance).
+    vec3 A = clamp(m.subsurface.rgb, 0.0, 0.999);
+    vec3 h = 4.09712 + 4.20863 * A - sqrt(9.59217 + 41.6808 * A + 17.7126 * A * A);
+    vec3 albedo = 1.0 - h * h;
+    vec3 radius = max(m.subsurfaceRadius.xyz, vec3(1e-3 * max(m.subsurfaceRadius.x, max(m.subsurfaceRadius.y,
+                                                                                           m.subsurfaceRadius.z))));
+    vec3 sigmaT = 1.0 / max(radius, vec3(1e-7));
+
+    uvec3 seed = uvec3(pixel, rt.params.x);
+    vec3 inward = -s.ng;
+    vec3 t, b;
+    Basis(inward, t, b);
+    vec4 u = Uniform4(seed, 0u);
+    float r = sqrt(u.x), phi = 2.0 * PI * u.y;
+    vec3 w = normalize((t * cos(phi) + b * sin(phi)) * r + inward * sqrt(max(1.0 - u.x, 0.0)));
+    vec3 p = OffsetRay(hit.position, inward);
+    vec3 throughput = vec3(1.0);
+    bool left = false;
+    uint steps = max(rt.subsurface.x, 1u);
+    for (uint k = 0u; k < steps; ++k) {
+        u = Uniform4(seed, k + 1u);
+        vec3 pick = throughput / max(throughput.r + throughput.g + throughput.b, 1e-30);
+        float sigma = u.x < pick.r ? sigmaT.r : u.x < pick.r + pick.g ? sigmaT.g : sigmaT.b;
+        bool last = k + 1u == steps;
+        float flight = last ? 1e30 : -log(1.0 - u.y) / sigma;
+        TraceReach(p, w, kRtMaskSurfaces, flight);
+        if (hit.t >= 0.0) {
+            // Out: no collision over hit.t, its probability under the pick.
+            vec3 through = exp(-sigmaT * hit.t);
+            throughput *= last ? exp(-(1.0 - albedo) * sigmaT * hit.t) : through / max(dot(pick, through), 1e-30);
+            left = true;
+            break;
+        }
+        // A collision at `flight`: scattered by the albedo.
+        vec3 density = sigmaT * exp(-sigmaT * flight);
+        throughput *= albedo * density / max(dot(pick, density), 1e-30);
+        p += w * flight;
+        float z = 2.0 * u.z - 1.0, sz = sqrt(max(1.0 - z * z, 0.0)), a = 2.0 * PI * u.w;
+        w = vec3(sz * cos(a), sz * sin(a), z);
+    }
+    vec3 light = vec3(0.0);
+    if (left) {
+        // The surface it leaves by, as a white diffuse surface facing out
+        // (the hit's normals face the ray, inside).
+        hit.normal = -hit.normal;
+        hit.geometric = -hit.geometric;
+        hit.baseColor = vec3(1.0);
+        hit.metallic = 0.0;
+        hit.emissive = vec3(0.0);
+        light = throughput * layered * ShadeHit(-hit.normal, seed + uvec3(0u, 0u, 104729u), false, true, false, false);
+    }
+    imageStore(rtSubsurfaceImage, pixel, vec4(BrightnessClamp(light, frame.lightClamp.y), 1.0));
+}

@@ -1,7 +1,7 @@
 #usda 1.0
 (
     doc = """Eldr's final settings over the gallery scenes' /Render/Settings: tests/scenes/final_settings.usda
-plus GI, ray-traced shadows, denoising and 256 film samples. tests/render_gallery.py sublayers it
+plus GI, ray-traced shadows and subsurface, denoising and 256 film samples. tests/render_gallery.py sublayers it
 over each scene (cornell.usda or a variant) for the Eldr final render; the scenes stay unchanged."""
 )
 
@@ -13,6 +13,7 @@ over "Render"
     {
         custom bool eldr:gi = 1
         custom bool eldr:rtShadows = 1
+        custom bool eldr:rtSubsurface = 1
         custom bool eldr:denoise = 1
         custom int eldr:filmSamples = 256
     }
