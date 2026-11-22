@@ -37,7 +37,7 @@ struct FrameData {
     float envWorldToLocal[16];
     float envRadiance[4];
     float prevViewProj[16];
-    float ssr[4];  // enabled, noise index, denoised, 1: unscale hits by last frame's splits
+    float ssr[4];  // enabled, noise index, SsrDenoise's mode (frame.glsl), 1: unscale hits by last frame's splits
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
@@ -3641,9 +3641,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
         // Denoised: the shading pass writes its rays (traced reflections
         // replace SSR where they apply: no denoiser then).
-        if (frame.ssrDenoise && !(tracedReflections && _rt && frame.depthPrepass)) {
-            fd.ssr[2] = 1.0f;
-            _ssr.Prepare();
+        // eldr:movingSsrResolution: while moving (and the ramp after, never
+        // in the film) one ray per 2 x 2 block, traced after the shading
+        // pass (SsrDenoise; 2 denoised, 3 the mirror rays).
+        const bool blocks = (moving || ramp) && !film && frame.movingSsrResolution > 1;
+        if ((frame.ssrDenoise || blocks) && !(tracedReflections && _rt && frame.depthPrepass)) {
+            fd.ssr[2] = !blocks ? 1.0f : frame.ssrDenoise ? 2.0f : 3.0f;
+            _ssr.Prepare(blocks ? 2 : 1, _setLayout);
         }
     }
 
@@ -4812,9 +4816,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     vkCmdEndRendering(_cmd);
     pass("shading");
     if (ssrDenoise) {
-        _ssr.Resolve(_cmd, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
+        _ssr.Resolve(_cmd, _set, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
                      frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f, _aovs.SplitsView(), splits,
-                     fd.lightPath[1]);
+                     fd.lightPath[1], fd.ssr[2] < 3.0f);
         pass("ssrDenoise");
     }
     _ssrHistory = ssrDenoise;

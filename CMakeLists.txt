@@ -48,7 +48,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp gather_denoise.comp rt_temporal.comp oit_resolve.frag
                shadow_tint.frag translucent_peel.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
                volume_upsample.frag volume_shadow.frag volume_grid.comp shadow_min.comp rt_skin.comp rt_displace.comp film.comp
-               shutter.comp light_shapes.frag background_unscale.comp)
+               shutter.comp light_shapes.frag background_unscale.comp ssr_trace.frag)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
@@ -60,7 +60,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl renderer/shaders/transparency.glsl
                 renderer/shaders/subsurface.glsl
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h
-                renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/volume.glsl)
+                renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/volume.glsl
+                renderer/shaders/ssr_trace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.

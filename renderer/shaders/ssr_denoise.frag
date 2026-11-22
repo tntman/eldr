@@ -4,24 +4,42 @@
 // temporal pass reprojecting through the reflected point, and the
 // variance-guided bilateral filter adding the result to the colour: built
 // once per pass (PASS 0, 1, 2), so each uses only the images it reads.
+// Below full resolution (pc.splits.z 2) the rays, directions, resolved,
+// history and current images hold one texel per 2 x 2 block of pixels,
+// traced from the block's first pixel (ssr_trace.frag): passes 0 and 1 run
+// over the blocks, pass 2 over the pixels.
 
 layout(set = 0, binding = 0) uniform sampler2D sceneDepth;  // window depth [0, 1]
 layout(set = 0, binding = 1) uniform sampler2D rays;        // radiance along the ray, its pdf
 layout(set = 0, binding = 2) uniform sampler2D directions;  // ray direction (octahedral), hit distance (< 0: none), GGX alpha
 layout(set = 0, binding = 3) uniform sampler2D normals;     // normal (octahedral)
-layout(set = 0, binding = 4) uniform sampler2D factor;      // the reflection's weight (rgb); a: 1 = has a ray
+layout(set = 0, binding = 4) uniform sampler2D factor;      // the reflection's weight (rgb); a > 0: has a ray,
+                                                            // 1 + the share of it that shows (presence, fog)
 layout(set = 0, binding = 5) uniform sampler2D resolved;    // the spatial pass's radiance, mean hit distance
 layout(set = 0, binding = 6) uniform sampler2D history;     // last frame's temporal result (rgb, luma^2), linear
 layout(set = 0, binding = 7) uniform sampler2D current;     // this frame's
 layout(set = 0, binding = 8) uniform sampler2D blueNoise;   // 64 x 64 RGBA (Renderer's sample dimensions)
+layout(set = 0, binding = 10) uniform sampler2D surface;    // below full resolution: each pixel's reflection without a hit
 
 layout(push_constant) uniform DenoiseParams {
     mat4 invViewProj;   // NDC -> world (row-vector order)
     mat4 prevViewProj;  // world -> last frame's clip
     vec4 eye;           // camera position; w: noise index
     vec4 params;        // x: kDimSsrDenoise's value (< 0: gradient noise), history valid, 1/width, 1/height
-    vec4 splits;        // x: 1 adds the result to the light splits, y: the indirect intensity (colour only)
+    vec4 splits;        // x: 1 adds the result to the light splits, y: the indirect intensity (colour only),
+                        // z: pixels per block's side (1, 2), w: 1 = the blocks' rays as traced (no passes 0, 1)
 } pc;
+
+// A block's pixel (the one its ray is traced from) and the last block.
+ivec2 Pixel(ivec2 block)
+{
+    return block * int(pc.splits.z);
+}
+
+ivec2 LastBlock()
+{
+    return (textureSize(sceneDepth, 0) - 1) / int(pc.splits.z);
+}
 
 #if PASS == 2
 // The light splits (mesh.frag's lightSplits): layer 3 is the indirect glossy light.
@@ -99,10 +117,10 @@ float Noise(vec2 p)
 // pixel's). Rays from other surfaces don't count.
 vec4 Spatial(ivec2 q)
 {
-    vec3 p = WorldPos(q), v = normalize(pc.eye.xyz - p);
-    vec3 n = OctDecode(texelFetch(normals, q, 0).xy);
+    vec3 p = WorldPos(Pixel(q)), v = normalize(pc.eye.xyz - p);
+    vec3 n = OctDecode(texelFetch(normals, Pixel(q), 0).xy);
     float a = texelFetch(directions, q, 0).w;
-    ivec2 maxQ = textureSize(sceneDepth, 0) - 1;
+    ivec2 maxQ = LastBlock();
     float radius = mix(1.0, 6.0, clamp(sqrt(a) * 1.5, 0.0, 1.0));  // pixels, wider for rougher lobes
     float angle = 2.0 * PI * Noise(vec2(q));
     vec3 sum = vec3(0.0);
@@ -112,11 +130,11 @@ vec4 Spatial(ivec2 q)
         float r = k == 0 ? 0.0 : radius * sqrt(float(k) / 8.0);
         float phi = angle + 2.39996323 * float(k);
         ivec2 s = clamp(q + ivec2(round(r * vec2(cos(phi), sin(phi)))), ivec2(0), maxQ);
-        if (texelFetch(factor, s, 0).a <= 0.0) {
+        if (texelFetch(factor, Pixel(s), 0).a <= 0.0) {
             continue;
         }
-        vec3 ns = OctDecode(texelFetch(normals, s, 0).xy);
-        vec3 ps = WorldPos(s);
+        vec3 ns = OctDecode(texelFetch(normals, Pixel(s), 0).xy);
+        vec3 ps = WorldPos(Pixel(s));
         if (dot(ns, n) < 0.9 || abs(dot(ps - p, n)) > 0.02 * length(p - pc.eye.xyz)) {
             continue;
         }
@@ -149,7 +167,7 @@ vec4 Temporal(ivec2 q)
     if (pc.params.y <= 0.0) {
         return vec4(c.rgb, luma * luma);
     }
-    ivec2 maxQ = textureSize(sceneDepth, 0) - 1;
+    ivec2 maxQ = LastBlock();
     vec3 m1 = vec3(0.0), m2 = vec3(0.0);
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
@@ -159,8 +177,7 @@ vec4 Temporal(ivec2 q)
         }
     }
     vec3 mean = m1 / 9.0, sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
-    vec3 p = WorldPos(q), v = normalize(pc.eye.xyz - p);
-    vec3 n = OctDecode(texelFetch(normals, q, 0).xy);
+    vec3 p = WorldPos(Pixel(q)), v = normalize(pc.eye.xyz - p);
     // Where the reflection appears to be: behind the mirror by the hit
     // distance (the surface itself without a hit).
     vec3 reflected = c.a > 0.0 ? p - v * c.a : p;
@@ -168,6 +185,10 @@ vec4 Temporal(ivec2 q)
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
     if (clip.w <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
         return vec4(c.rgb, luma * luma);
+    }
+    if (pc.splits.z > 1.0) {
+        // In blocks: a block's texel is centred on its first pixel.
+        uv = ((uv / pc.params.zw - 0.5) / pc.splits.z + 0.5) / vec2(textureSize(history, 0));
     }
     vec4 h = textureLod(history, uv, 0.0);
     if (any(isnan(h)) || any(isinf(h))) {
@@ -183,42 +204,112 @@ vec4 Temporal(ivec2 q)
 // 3. A bilateral filter over the same surface, its luma weights scaled by
 // the temporal variance (wide where still noisy, tight where converged),
 // times the reflection's weight, added to the colour.
+// Below full resolution: the pixel's reflection from the blocks around it.
+// First the four nearest by their bilinear weights, those on the pixel's
+// own surface (its plane, and its normal where any has it: a bumpy
+// surface's blocks still count); without one, what the pixel reflects
+// without a hit (the probe or dome: a feature thinner than a block).
+// Then, denoised, the bilateral filter over the 3 x 3 blocks around it.
+vec3 FromBlocks(ivec2 q)
+{
+    bool traced = pc.splits.w > 0.0;
+    vec3 p = WorldPos(q);
+    vec3 n = OctDecode(texelFetch(normals, q, 0).xy);
+    float plane = 0.02 * length(p - pc.eye.xyz);
+    ivec2 last = LastBlock();
+    vec2 h = vec2(q) / pc.splits.z;  // in blocks, whole at their pixels
+    ivec2 base = ivec2(floor(h));
+    vec2 t = h - vec2(base);
+    vec4 same = vec4(0.0), near = vec4(0.0);  // rgb, luma^2 (denoised); the surface's blocks with and without its normal
+    float sameWeights = 0.0, nearWeights = 0.0;
+    for (int k = 0; k < 4; ++k) {
+        ivec2 o = ivec2(k & 1, k >> 1), b = base + o, s = Pixel(b);
+        float w = (o.x == 0 ? 1.0 - t.x : t.x) * (o.y == 0 ? 1.0 - t.y : t.y);
+        if (w <= 0.0 || any(greaterThan(b, last)) || texelFetch(factor, s, 0).a <= 0.0 ||
+            abs(dot(WorldPos(s) - p, n)) > plane) {
+            continue;
+        }
+        vec4 c = traced ? texelFetch(rays, b, 0) : texelFetch(current, b, 0);
+        near += c * w;
+        nearWeights += w;
+        if (dot(OctDecode(texelFetch(normals, s, 0).xy), n) >= 0.9) {
+            same += c * w;
+            sameWeights += w;
+        }
+    }
+    if (nearWeights <= 0.0) {
+        return texelFetch(surface, q, 0).rgb;
+    }
+    vec4 center = sameWeights > 0.0 ? same / sameWeights : near / nearWeights;
+    if (traced) {
+        return center.rgb;
+    }
+    float luma = Luma(center.rgb);
+    float sigma = sqrt(max(center.a - luma * luma, 0.0)) + 1e-3;
+    ivec2 middle = ivec2(round(h));
+    vec3 sum = vec3(0.0);
+    float weights = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 b = clamp(middle + ivec2(x, y), ivec2(0), last), s = Pixel(b);
+            if (texelFetch(factor, s, 0).a <= 0.0) {
+                continue;
+            }
+            vec3 ns = OctDecode(texelFetch(normals, s, 0).xy);
+            if (dot(ns, n) < 0.9 || abs(dot(WorldPos(s) - p, n)) > plane) {
+                continue;
+            }
+            vec3 c = texelFetch(current, b, 0).rgb;
+            vec2 d = vec2(s - q);
+            float w = exp(-abs(Luma(c) - luma) / (2.0 * sigma)) * exp(-0.1 * dot(d, d));
+            sum += c * w;
+            weights += w;
+        }
+    }
+    return weights > 0.0 ? sum / weights : center.rgb;
+}
+
 vec4 Composite(ivec2 q)
 {
     vec4 f = texelFetch(factor, q, 0);
     if (f.a <= 0.0) {
         return vec4(0.0);
     }
-    vec4 center = texelFetch(current, q, 0);
-    float luma = Luma(center.rgb);
-    float sigma = sqrt(max(center.a - luma * luma, 0.0)) + 1e-3;
-    vec3 p = WorldPos(q);
-    vec3 n = OctDecode(texelFetch(normals, q, 0).xy);
-    ivec2 maxQ = textureSize(sceneDepth, 0) - 1;
-    vec3 sum = vec3(0.0);
-    float weights = 0.0;
-    for (int y = -2; y <= 2; ++y) {
-        for (int x = -2; x <= 2; ++x) {
-            ivec2 s = clamp(q + ivec2(x, y), ivec2(0), maxQ);
-            if (texelFetch(factor, s, 0).a <= 0.0) {
-                continue;
+    vec3 c;
+    if (pc.splits.z > 1.0) {
+        c = FromBlocks(q);
+    } else {
+        vec4 center = texelFetch(current, q, 0);
+        float luma = Luma(center.rgb);
+        float sigma = sqrt(max(center.a - luma * luma, 0.0)) + 1e-3;
+        vec3 p = WorldPos(q);
+        vec3 n = OctDecode(texelFetch(normals, q, 0).xy);
+        ivec2 maxQ = textureSize(sceneDepth, 0) - 1;
+        vec3 sum = vec3(0.0);
+        float weights = 0.0;
+        for (int y = -2; y <= 2; ++y) {
+            for (int x = -2; x <= 2; ++x) {
+                ivec2 s = clamp(q + ivec2(x, y), ivec2(0), maxQ);
+                if (texelFetch(factor, s, 0).a <= 0.0) {
+                    continue;
+                }
+                vec3 ns = OctDecode(texelFetch(normals, s, 0).xy);
+                if (dot(ns, n) < 0.9 || abs(dot(WorldPos(s) - p, n)) > 0.02 * length(p - pc.eye.xyz)) {
+                    continue;
+                }
+                vec3 t = texelFetch(current, s, 0).rgb;
+                float w = exp(-abs(Luma(t) - luma) / (2.0 * sigma)) * exp(-0.1 * float(x * x + y * y));
+                sum += t * w;
+                weights += w;
             }
-            vec3 ns = OctDecode(texelFetch(normals, s, 0).xy);
-            if (dot(ns, n) < 0.9 || abs(dot(WorldPos(s) - p, n)) > 0.02 * length(p - pc.eye.xyz)) {
-                continue;
-            }
-            vec3 c = texelFetch(current, s, 0).rgb;
-            float w = exp(-abs(Luma(c) - luma) / (2.0 * sigma)) * exp(-0.1 * float(x * x + y * y));
-            sum += c * w;
-            weights += w;
         }
+        c = weights > 0.0 ? sum / weights : center.rgb;
     }
-    vec3 c = weights > 0.0 ? sum / weights : center.rgb;
     if (pc.splits.x != 0.0) {
         vec4 glossy = imageLoad(lightSplits, ivec3(q, 3));
         imageStore(lightSplits, ivec3(q, 3), vec4(glossy.rgb + f.rgb * c, glossy.a));
     }
-    return vec4(f.rgb * c * pc.splits.y, 0.0);  // indirect glossy
+    return vec4(f.rgb * (f.a - 1.0) * c * pc.splits.y, 0.0);  // indirect glossy (the splits are unfogged)
 }
 
 #endif
@@ -227,7 +318,7 @@ void main()
 {
     ivec2 q = ivec2(gl_FragCoord.xy);
 #if PASS == 0
-    vec4 result = texelFetch(factor, q, 0).a > 0.0 ? Spatial(q) : vec4(0.0, 0.0, 0.0, -1.0);
+    vec4 result = texelFetch(factor, Pixel(q), 0).a > 0.0 ? Spatial(q) : vec4(0.0, 0.0, 0.0, -1.0);
 #elif PASS == 1
     vec4 result = Temporal(q);
 #else
