@@ -968,6 +968,7 @@ public:
             bool translucent = false;  // blended: only traced shadows that tint see it
             uint32_t firstInstance = 0;  // its first instance slot (a displacement graph's instance inputs)
             bool tints = false;  // kTints: traced shadows take its tint, other rays see it opaque
+            bool moving = false;  // its points move (Mesh::velocities): traced at each time sample's positions
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it

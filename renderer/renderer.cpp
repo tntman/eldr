@@ -852,7 +852,7 @@ void Renderer::_CreateDescriptors()
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         // Deformation blur: point velocities (Scene::Gpu::velocities).
-        {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT},
         // Ray tracing: TLAS, traced shadows and reflections (storage
         // images), vertex and index pools, mesh slots, probe atlases, uniforms.
         {52, _dev.rayTracing ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
