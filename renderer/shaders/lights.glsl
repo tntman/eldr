@@ -68,6 +68,44 @@ float LightRange(Light light)
            length(light.halfWidth.xyz + light.halfHeight.xyz);
 }
 
+// Stochastic light ranges (frame.localLights.z, Tokuyoshi and Harada's
+// stochastic light culling): this sample, light `index` reaches
+// LightRange / sqrt(u), u uniform per light and sample. Past LightRange it
+// lights at the cutoff where it reaches (LightWindow), so on average every
+// light keeps its whole 1 / d^2 falloff: thousands of dim lights, each
+// under the cutoff, add up as in a path tracer.
+float LightReachScale(uint index)
+{
+    if (frame.localLights.z == 0u) {
+        return 1.0;
+    }
+    uint h = (index + 1u) * 0x9e3779b9u ^ frame.localLights.y * 0x85ebca6bu;
+    h ^= h >> 16;
+    h *= 0x7feb352du;
+    h ^= h >> 15;
+    h *= 0x846ca68bu;
+    h ^= h >> 16;
+    return inversesqrt((float(h >> 8) + 0.5) / 16777216.0);
+}
+
+float LightReach(Light light, uint index)
+{
+    return LightRange(light) * LightReachScale(index);
+}
+
+// The factor on light `index`'s radiance at distance d. Without stochastic
+// ranges a smooth window to 0 at LightRange.
+float LightWindow(Light light, uint index, float d)
+{
+    float range = LightRange(light);
+    if (frame.localLights.z == 0u) {
+        float w = clamp(1.0 - pow(d / range, 4.0), 0.0, 1.0);
+        return w * w;
+    }
+    float x = d / range;
+    return x <= 1.0 ? 1.0 : x < LightReachScale(index) ? x * x : 0.0;
+}
+
 // Polygon form factors (mesh.frag's rect lights, rt_shade.glsl's ShadeHit).
 // One edge's term of a polygon's form factor vector (corners relative to
 // the shading point); the sum over a closed loop, / 2 pi, is the vector.

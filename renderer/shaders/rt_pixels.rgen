@@ -150,7 +150,7 @@ float ReflectionKeep(ivec2 pixel, uint slot, vec3 baseColor, float metallic, flo
 // Whether `light` gives p nothing in mesh.frag (LocalLight: past its
 // range, outside its cone; light linking by the receiver's linkMask), so
 // its shadow ray can stay untraced (eldr:rtLightSampling).
-bool LightCulled(Light light, vec3 p, uint linkMask)
+bool LightCulled(Light light, uint index, vec3 p, uint linkMask)
 {
     if (!LightLinked(light, linkMask)) {
         return true;
@@ -160,7 +160,7 @@ bool LightCulled(Light light, vec3 p, uint linkMask)
     }
     vec3 fromLight = p - light.position.xyz;
     float d = length(fromLight);
-    return d >= LightRange(light) ||
+    return d >= LightReach(light, index) ||
            acos(clamp(dot(fromLight / max(d, 1e-20), light.axis.xyz), -1.0, 1.0)) > light.shaping.y + 1e-3;
 }
 
@@ -318,7 +318,7 @@ void main()
                 vec4 noise = texelFetch(blueNoise, (pixel + ivec2(k * 23u + 7u, k * 41u + 13u)) & 63, 0);
                 u = fract(((k & 1u) != 0u ? noise.zw : noise.xy) + rt.shadowSample.xy);
             }
-            bool culled = cull && LightCulled(lights[light], p, linkMask);
+            bool culled = cull && LightCulled(lights[light], light, p, linkMask);
             bool traced = !culled && fract(turn + float(k) * share) < share;
             vec3 v = culled ? vec3(share) : traced ? LightVisibility(light, p, ng, u, rt.params.y) : vec3(0.0);
             if (penumbra) {

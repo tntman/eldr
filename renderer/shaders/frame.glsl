@@ -20,7 +20,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
                          // w = 1: unscale hits by last frame's light splits
     vec4 clusters;       // near, far (along cameraForward), log2(far / near), light cutoff radiance
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
-                         // y: TAA sample index (noise for soft shadows)
+                         // y: TAA sample index (noise for soft shadows), z: 1 stochastic light ranges
     uvec4 features;      // x: kFeature* flags, y: SSR steps, z: soft shadow samples
     // Shading styles (brdf.glsl): x: kStyle* flags, y: toon bands for every
     // material (0: only materials with their own).

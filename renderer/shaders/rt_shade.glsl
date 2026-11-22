@@ -366,12 +366,12 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
                                             : PI * r2 * cosLight;
         float formFactor = type == kLightRect ? PI * RectFormFactorClipped(toLight, light.halfWidth.xyz, light.halfHeight.xyz, n)
                                               : area * NoL / (type == kLightDisk ? d2 + r2 : d2);
-        float window = clamp(1.0 - pow(sqrt(d2) / LightRange(light), 4.0), 0.0, 1.0);
+        float window = LightWindow(light, i, sqrt(d2));
         float theta = acos(clamp(cosLight, -1.0, 1.0));
         float cone = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
                                                          : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
         vec3 e = light.color.rgb * LightTint(light, p) *
-                 (formFactor * window * window * cone * EmitterClamp(light, albedo) * ClusterLightScale(gridBase, k));
+                 (formFactor * window * cone * EmitterClamp(light, albedo) * ClusterLightScale(gridBase, k));
         vec3 w = e * light.halfHeight.w, lit = w * diffuse / PI;
         if (specular) {
             float size = type == kLightSphere ? light.axis.w : max(h, length(light.halfHeight.xyz));

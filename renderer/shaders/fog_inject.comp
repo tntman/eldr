@@ -142,7 +142,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 toCamera)
     Light light = lights[index];
     vec3 toLight = light.position.xyz - p;
     float d = length(toLight);
-    float window = clamp(1.0 - pow(d / LightRange(light), 4.0), 0.0, 1.0);
+    float window = LightWindow(light, index, d);
     if (window <= 0.0 || d <= 0.0) {
         return vec3(0.0);
     }
@@ -167,7 +167,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 toCamera)
         area = (type == kLightRect ? 4.0 : PI) * length(cross(light.halfWidth.xyz, light.halfHeight.xyz)) *
                max(cosOff, 0.0);
     }
-    return radiance * (area * window * window / (d * d) * Phase(dot(-l, toCamera)) * light.halfHeight.w) *
+    return radiance * (area * window / (d * d) * Phase(dot(-l, toCamera)) * light.halfHeight.w) *
            LocalShadow(index, light, p);
 }
 

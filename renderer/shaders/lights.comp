@@ -19,12 +19,13 @@ const int kImportanceBins = 24;
 const uint kStrongLights = 191u, kSampledLights = 48u;
 
 // How strongly the light reaches the box lo..hi: -1 not at all (past its
-// range, LightRange), else log2 of w = (range / distance)^2 to the box's
+// range, LightReach), else log2 of w = (range / distance)^2 to the box's
 // nearest point (its light there over the cutoff), 0 to kImportanceBins - 1.
-int Importance(Light light, vec3 lo, vec3 hi, out float w)
+int Importance(uint index, vec3 lo, vec3 hi, out float w)
 {
+    Light light = lights[index];
     vec3 q = clamp(light.position.xyz, lo, hi) - light.position.xyz;
-    float range = LightRange(light), d2 = dot(q, q);
+    float range = LightReach(light, index), d2 = dot(q, q);
     w = min(range * range / max(d2, 1e-20), exp2(float(kImportanceBins)));
     if (d2 > range * range) {
         return -1;
@@ -87,7 +88,7 @@ void main()
     bool overflow = false;
     for (uint i = 0u; i < frame.localLights.x; ++i) {
         float w;
-        if (Importance(lights[frame.counts.x + i], lo, hi, w) >= 0) {
+        if (Importance(frame.counts.x + i, lo, hi, w) >= 0) {
             if (count == kMaxClusterLights) {
                 overflow = true;
                 break;
@@ -112,7 +113,7 @@ void main()
         }
         for (uint i = 0u; i < frame.localLights.x; ++i) {
             float w;
-            int b = Importance(lights[frame.counts.x + i], lo, hi, w);
+            int b = Importance(frame.counts.x + i, lo, hi, w);
             if (b >= 0) {
                 ++bins[b];
                 weights[b] += w;
@@ -133,7 +134,7 @@ void main()
         count = 0u;
         for (uint i = 0u; i < frame.localLights.x && count < kMaxClusterLights; ++i) {
             float w;
-            int b = Importance(lights[frame.counts.x + i], lo, hi, w);
+            int b = Importance(frame.counts.x + i, lo, hi, w);
             if (b > cut || (b == cut && quota > 0u)) {
                 quota -= b == cut ? 1u : 0u;
                 clusterLights[base + 1u + count] = frame.counts.x + i;

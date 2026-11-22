@@ -3852,6 +3852,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.counts[0] = gpu.lightCount;
     fd.localLights[0] = localLights;
     fd.localLights[1] = sample;
+    fd.localLights[2] = frame.stochasticLightRange ? 1 : 0;
     // Sample dimensions: this sample's value per effect (the TAA cycle's
     // or the film's sample; 0 without TAA).
     float dims[kSampleDims] = {};
