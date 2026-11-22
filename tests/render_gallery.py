@@ -134,6 +134,7 @@ FEATURES = [("material_lobes", "2026-10-30_22_material_lobes", "Material lobes")
             ("further_suns", "2026-10-30_26_further_sun_shadows", "A second sun's shadows"),
             ("shadow_linking", "2026-10-29_15_light_linking", "Light and shadow linking"),
             ("colour_limit", "2026-10-29_17_colour_limit", "Colour limit"),
+            ("velocity_blur", "2026-10-28_02_velocity_blur", "Velocity motion blur"),
             ("reflection_blur", "2026-10-29_10_reflection_motion_blur", "Motion blur in reflections"),
             ("instancing", "2026-10-30_20_instancing", "Nested instancing"),
             ("coloured_shadows", "2026-10-29_05_coloured_volume_shadows", "Coloured volume shadows"),

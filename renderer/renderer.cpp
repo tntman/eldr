@@ -852,7 +852,7 @@ void Renderer::_CreateDescriptors()
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         // Deformation blur: point velocities (Scene::Gpu::velocities).
-        {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT},
         // Ray tracing: TLAS, traced shadows and reflections (storage
         // images), vertex and index pools, mesh slots, probe atlases, uniforms.
         {52, _dev.rayTracing ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -3855,6 +3855,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.counts[0] = gpu.lightCount;
     fd.localLights[0] = localLights;
     fd.localLights[1] = sample;
+    fd.localLights[2] = frame.stochasticLightRange ? 1 : 0;
     // Sample dimensions: this sample's value per effect (the TAA cycle's
     // or the film's sample; 0 without TAA).
     float dims[kSampleDims] = {};

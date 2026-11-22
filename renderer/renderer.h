@@ -58,6 +58,7 @@ public:
         bool frustumCulling = true;      // off: every instance is drawn (small-object culling too)
         bool localLights = true;         // sphere, rect, disk and cylinder lights
         bool clusteredLights = true;     // off: every pixel loops over all local lights
+        bool stochasticLightRange = true;  // lights reach past their cutoff at random (lights.glsl LightWindow)
         bool lightTextures = true;       // rect and disk lights' inputs:texture:file
         bool lightLinking = true;        // UsdLux collection:lightLink / shadowLink (Scene::SetLightOptions)
         bool lightIes = true;            // UsdLux shaping:ies:file profiles (Scene::SetLightOptions)

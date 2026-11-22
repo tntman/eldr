@@ -2149,17 +2149,33 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         _CommitShutterPoses(shutterSkin);
     }
     // A second commit for the same frame (keepMotion) keeps the first's
-    // motion when it moved nothing itself. So does one that uploaded no mesh
-    // while the motion is the shutter's (sampled motion): husk commits again
-    // after its first frame (levels of detail that finished), and the new
-    // scene version (below) restarts the film, which then needs that
-    // motion to capture the shutter again instead of rendering still.
+    // motion for every mesh that brought none itself: a re-diced subdivision
+    // mesh uploads its own (its points' samples) while the re-synced rigid
+    // ones upload none, and kept the whole first commit's motion only when
+    // nothing moved (with offline re-dicing, rigid transforms rendered still).
+    // So does one that uploaded no mesh while the motion is the shutter's
+    // (sampled motion): husk commits again after its first frame (levels of
+    // detail that finished), and the new scene version (below) restarts the
+    // film, which then needs that motion to capture the shutter again
+    // instead of rendering still.
     const bool keepShutter = !keepMotion && !uploads && _keptShutter;
-    if ((keepMotion || keepShutter) && !_gpu.moved && _keptMotionBase.size() == motionBase.size()) {
-        motion = _keptMotion;
-        motionBase = _keptMotionBase;
-        _gpu.moved = keepMotion && _keptMoved;
-        shutterRows = _keptShutter;
+    if ((keepMotion || keepShutter) && _keptMotionBase.size() == motionBase.size()) {
+        bool kept = false;
+        for (const auto &m : _meshes) {
+            const uint32_t s = m->_slot, from = _keptMotionBase[s];
+            const size_t rows = m->transforms.size() / 16 * 12;
+            if (motionBase[s] != kNone || from == kNone || size_t(from) * 12 + rows > _keptMotion.size()) {
+                continue;
+            }
+            motionBase[s] = uint32_t(motion.size() / 12);
+            motion.insert(motion.end(), _keptMotion.begin() + size_t(from) * 12,
+                          _keptMotion.begin() + size_t(from) * 12 + rows);
+            kept = true;
+        }
+        if (kept) {
+            _gpu.moved = _gpu.moved || (keepMotion && _keptMoved);
+            shutterRows = shutterRows || _keptShutter;
+        }
     }
     _keptMotion = motion;
     _keptMotionBase = motionBase;
@@ -2488,7 +2504,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
                                    drawable ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
                                    (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent, m._instanceBase,
-                                   blend == Gpu::kTints};
+                                   blend == Gpu::kTints, m._velocityCount > 0};
         drawn[slot] = drawable ? m._instanceCount : 0;
         rays[slot] = drawable ? m.rays : 0;
         if (drawable) {

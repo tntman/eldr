@@ -929,14 +929,17 @@ int main()
 
             // 256 small lights 0.1 in front of the wall, each reaching ~0.2:
             // every pixel must get the sum over all lights, so clustering
-            // dropped none. Range as in lights.glsl (cutoff 0.0018 without post).
+            // dropped none. Range as in lights.glsl (cutoff 0.0018 without post),
+            // its fixed window (stochastic ranges off).
             const float R = 0.01f, L = 0.72f, range = R * std::sqrt(L / 0.0018f);
             for (int i = 0; i < 256; ++i) {
                 AddSphereLight(scene, -0.9375f + 0.125f * float(i % 16), -0.9375f + 0.125f * float(i / 16),
                                0.4f, R, L);
             }
             scene.Commit();
-            img = Render(renderer, scene);
+            vkr::Renderer::Frame fixedRange = IdentityFrame();
+            fixedRange.stochasticLightRange = false;
+            img = Render(renderer, scene, fixedRange);
             float worst = 0.0f;
             for (int py : {5, 20, 33, 47, 60}) {
                 for (int px : {3, 18, 31, 44, 62}) {
@@ -952,7 +955,7 @@ int main()
                 }
             }
             Expect(worst < 0.03f, "clustered lights: every pixel gets all lights in range");
-            vkr::Renderer::Frame frame = IdentityFrame();
+            vkr::Renderer::Frame frame = fixedRange;
             frame.clusteredLights = false;
             Expect(MaxDifference(Render(renderer, scene, frame), img) < 1e-3f,
                    "Frame::clusteredLights off: every light per pixel, the same image");
@@ -1015,9 +1018,13 @@ int main()
                     l->castShadows = true;
                 }
                 many.Commit();
-                vkr::Renderer::Frame off = IdentityFrame();
+                // Fixed ranges: the neighbours' stochastic tails (rightly
+                // unshadowed there) would light each other's shadows.
+                vkr::Renderer::Frame fixedRanges = IdentityFrame();
+                fixedRanges.stochasticLightRange = false;
+                vkr::Renderer::Frame off = fixedRanges;
                 off.localShadows = false;
-                const Image shadowed = Render(renderer, many), open = Render(renderer, many, off);
+                const Image shadowed = Render(renderer, many, fixedRanges), open = Render(renderer, many, off);
                 int dark = 0;
                 for (int i = 0; i < 20; ++i) {
                     const int px = int(std::floor((-0.8f + 0.4f * float(i % 5) + 0.15f + 1.0f) * 32.0f));

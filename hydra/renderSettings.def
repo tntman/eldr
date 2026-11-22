@@ -133,6 +133,7 @@ HDVK_SETTING(screenBackfaceScale, "Screen-Space Back-Face Hit Scale (0-1)", fram
 HDVK_GROUP("Advanced: Lights", false)
 HDVK_SETTING(localLights, "Local Lights", frame.localLights)
 HDVK_SETTING(clusteredLights, "Clustered Local Lights", frame.clusteredLights)
+HDVK_SETTING(stochasticLightRange, "Stochastic Light Range", frame.stochasticLightRange)
 HDVK_SETTING(lightTextures, "Light Textures", frame.lightTextures)
 HDVK_SETTING(lightLinking, "Light Linking", frame.lightLinking)
 HDVK_SETTING(lightIes, "IES Profiles", frame.lightIes)

@@ -232,6 +232,7 @@ def settings(name, samples):
         custom bool eldr:gi = 1
         custom bool eldr:motionBlur = 1
         custom bool eldr:rtShadows = 1
+        custom bool eldr:rtSubsurface = 1
         custom int eldr:textureCompression = 1
     }
 ''' % (name, rel("tests/scenes/final_settings.usda"), W, H, samples)

@@ -781,15 +781,19 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
         }
         // A displaced mesh's BLAS follows the displacement (scale, on or off).
         const float displacement = g.displaced ? _work.displacement : 0.0f;
+        // Moving points (deformation blur): rebuilt from their positions at
+        // each time sample (rt_displace.comp), as mesh.vert draws them, and
+        // once more when the samples end.
+        const bool moving = g.moving && _work.moving;
         const auto it = _blas.find(g.version);
         if (it != _blas.end() &&
-            (it->second.displacement != displacement ||
+            (moving || it->second.displacement != displacement ||
              (displacement != 0.0f && it->second.graphs != _work.displacementGraphs))) {
             _DestroyBlas(it->second);
             _blas.erase(it);
         }
         if (!_blas.count(g.version)) {
-            if (displacement != 0.0f) {
+            if (displacement != 0.0f || moving) {
                 displaced.push_back({s, g.firstInstance, false, 0});
             } else {
                 missing.push_back(s);

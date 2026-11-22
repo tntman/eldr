@@ -213,10 +213,31 @@ render([2], FINAL)
 sharp = ramp(32)
 expect(sharp <= 4, "primvars:karma:object:mblur off: moving points stay sharp (%d edge pixels)" % sharp)
 
+# An offline frame re-dices subdivision meshes for its view and commits
+# again: the rigid cube keeps its motion through the shutter beside a
+# subdivision mesh whose points move (it uploads motion of its own).
+mesh.GetPrim().SetActive(False)
+cube.GetPrim().SetActive(True)
+UsdGeom.PrimvarsAPI(cube).GetPrimvar("karma:object:mblur").Set(True)
+subdiv = UsdGeom.Mesh.Define(stage, "/subdivDeforming")
+subdiv.CreateFaceVertexCountsAttr([4] * 6)
+subdiv.CreateFaceVertexIndicesAttr(mesh.GetFaceVertexIndicesAttr().Get())
+subdiv.CreateSubdivisionSchemeAttr("catmullClark")
+for t, dx in ((1, -1.0), (3, 1.0)):
+    subdiv.CreatePointsAttr().Set([p * 0.5 + Gf.Vec3f(dx, 1.2, 0) for p in corners], t)
+stage.GetRootLayer().Save()
+if os.path.exists(exrPath):
+    os.remove(exrPath)
+run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
+     "--frames", "2", "-w", str(SIZE), scenePath, os.path.join(folder, "unused.#.png")], check=True, shell=True)
+blurred = ramp(32)
+expect(blurred >= 12, "beside a moving subdivision mesh the cube is still blurred (%d edge pixels)" % blurred)
+subdiv.GetPrim().SetActive(False)
+cube.GetPrim().SetActive(False)
+
 # Velocity blur: still points with velocities (24 units a second, a unit a
 # frame as above) blur only where Velocity Blur asks (Karma's default off);
 # Eldr's primvar wins over Karma's.
-mesh.GetPrim().SetActive(False)
 still = UsdGeom.Mesh.Define(stage, "/velocities")
 for attr, value in ((still.CreateFaceVertexCountsAttr(), [4] * 6),
                     (still.CreateFaceVertexIndicesAttr(), mesh.GetFaceVertexIndicesAttr().Get()),

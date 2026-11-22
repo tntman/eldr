@@ -1,23 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="770" height="1196" viewBox="0 0 770 1196" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12">
+<svg xmlns="http://www.w3.org/2000/svg" width="770" height="1214" viewBox="0 0 770 1214" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12">
 <rect width="100%" height="100%" fill="#0d1117"/>
 <text x="10" y="20" font-size="15" font-weight="600" fill="#e6edf3">Mean brightness relative to Karma CPU</text>
 <circle cx="15.0" cy="38.0" r="5.0" fill="#6ea8fe"/><text x="24" y="42" fill="#e6edf3">Eldr raster + SSGI</text>
 <polygon points="177.0,31.8 182.5,38.0 177.0,44.2 171.5,38.0" fill="#f0a35e"/><text x="186" y="42" fill="#e6edf3">Eldr ray traced</text>
 <polygon points="318.0,32.0 323.5,42.2 312.5,42.2" fill="#c29bff"/><text x="327" y="42" fill="#e6edf3">Karma XPU</text>
-<line x1="220.0" y1="54" x2="220.0" y2="1170" stroke="#30363d"/>
-<text x="220.0" y="1186" text-anchor="middle" fill="#e6edf3">0.00×</text>
-<line x1="306.7" y1="54" x2="306.7" y2="1170" stroke="#30363d"/>
-<text x="306.7" y="1186" text-anchor="middle" fill="#e6edf3">0.25×</text>
-<line x1="393.3" y1="54" x2="393.3" y2="1170" stroke="#30363d"/>
-<text x="393.3" y="1186" text-anchor="middle" fill="#e6edf3">0.50×</text>
-<line x1="480.0" y1="54" x2="480.0" y2="1170" stroke="#30363d"/>
-<text x="480.0" y="1186" text-anchor="middle" fill="#e6edf3">0.75×</text>
-<line x1="566.7" y1="54" x2="566.7" y2="1170" stroke="#30363d" stroke-width="2"/>
-<text x="566.7" y="1186" text-anchor="middle" fill="#e6edf3">1.00×</text>
-<line x1="653.3" y1="54" x2="653.3" y2="1170" stroke="#30363d"/>
-<text x="653.3" y="1186" text-anchor="middle" fill="#e6edf3">1.25×</text>
-<line x1="740.0" y1="54" x2="740.0" y2="1170" stroke="#30363d"/>
-<text x="740.0" y="1186" text-anchor="middle" fill="#e6edf3">1.50×</text>
+<line x1="220.0" y1="54" x2="220.0" y2="1188" stroke="#30363d"/>
+<text x="220.0" y="1204" text-anchor="middle" fill="#e6edf3">0.00×</text>
+<line x1="306.7" y1="54" x2="306.7" y2="1188" stroke="#30363d"/>
+<text x="306.7" y="1204" text-anchor="middle" fill="#e6edf3">0.25×</text>
+<line x1="393.3" y1="54" x2="393.3" y2="1188" stroke="#30363d"/>
+<text x="393.3" y="1204" text-anchor="middle" fill="#e6edf3">0.50×</text>
+<line x1="480.0" y1="54" x2="480.0" y2="1188" stroke="#30363d"/>
+<text x="480.0" y="1204" text-anchor="middle" fill="#e6edf3">0.75×</text>
+<line x1="566.7" y1="54" x2="566.7" y2="1188" stroke="#30363d" stroke-width="2"/>
+<text x="566.7" y="1204" text-anchor="middle" fill="#e6edf3">1.00×</text>
+<line x1="653.3" y1="54" x2="653.3" y2="1188" stroke="#30363d"/>
+<text x="653.3" y="1204" text-anchor="middle" fill="#e6edf3">1.25×</text>
+<line x1="740.0" y1="54" x2="740.0" y2="1188" stroke="#30363d"/>
+<text x="740.0" y="1204" text-anchor="middle" fill="#e6edf3">1.50×</text>
 <text x="210" y="71.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Global illumination</text>
 <g><title>Global illumination, Eldr raster + SSGI: 0.75×</title><circle cx="479.6" cy="71.0" r="4.5" fill="#6ea8fe"/></g>
 <g><title>Global illumination, Eldr ray traced: 1.02×</title><polygon points="574.6,65.4 579.5,71.0 574.6,76.6 569.6,71.0" fill="#f0a35e"/></g>
@@ -186,8 +186,8 @@
 <g><title>Light shapes, Karma XPU: 1.01×</title><polygon points="568.9,713.6 573.9,722.8 564.0,722.8" fill="#c29bff"/></g>
 <rect x="0" y="728.0" width="770" height="18" fill="#30363d" opacity="0.35"/>
 <text x="210" y="737.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Many lights</text>
-<g><title>Many lights, Eldr raster + SSGI: 0.98×</title><circle cx="559.8" cy="737.0" r="4.5" fill="#6ea8fe"/></g>
-<g><title>Many lights, Eldr ray traced: 0.97×</title><polygon points="557.1,731.4 562.0,737.0 557.1,742.6 552.1,737.0" fill="#f0a35e"/></g>
+<g><title>Many lights, Eldr raster + SSGI: 1.09×</title><circle cx="599.3" cy="737.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>Many lights, Eldr ray traced: 1.08×</title><polygon points="594.7,731.4 599.6,737.0 594.7,742.6 589.7,737.0" fill="#f0a35e"/></g>
 <g><title>Many lights, Karma XPU: 1.02×</title><polygon points="573.7,731.6 578.7,740.8 568.8,740.8" fill="#c29bff"/></g>
 <text x="210" y="755.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Volume multiple scattering</text>
 <g><title>Volume multiple scattering, Eldr raster + SSGI: 0.62×</title><circle cx="436.5" cy="755.0" r="4.5" fill="#6ea8fe"/></g>
@@ -261,35 +261,40 @@
 <g><title>Colour limit, Eldr raster + SSGI: 1.23×</title><circle cx="647.7" cy="1025.0" r="4.5" fill="#6ea8fe"/></g>
 <g><title>Colour limit, Eldr ray traced: 1.13×</title><polygon points="611.7,1019.4 616.7,1025.0 611.7,1030.6 606.8,1025.0" fill="#f0a35e"/></g>
 <g><title>Colour limit, Karma XPU: 0.94×</title><polygon points="546.1,1019.6 551.1,1028.8 541.2,1028.8" fill="#c29bff"/></g>
-<text x="210" y="1043.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Motion blur in reflections</text>
-<g><title>Motion blur in reflections, Eldr raster + SSGI: 1.05×</title><circle cx="584.6" cy="1043.0" r="4.5" fill="#6ea8fe"/></g>
-<g><title>Motion blur in reflections, Eldr ray traced: 1.01×</title><polygon points="571.4,1037.4 576.3,1043.0 571.4,1048.6 566.4,1043.0" fill="#f0a35e"/></g>
-<g><title>Motion blur in reflections, Karma XPU: 1.01×</title><polygon points="569.2,1037.6 574.2,1046.8 564.3,1046.8" fill="#c29bff"/></g>
+<text x="210" y="1043.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Velocity motion blur</text>
+<g><title>Velocity motion blur, Eldr raster + SSGI: 0.96×</title><circle cx="553.8" cy="1043.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>Velocity motion blur, Eldr ray traced: 0.99×</title><polygon points="563.0,1037.4 568.0,1043.0 563.0,1048.6 558.1,1043.0" fill="#f0a35e"/></g>
+<g><title>Velocity motion blur, Karma XPU: 1.02×</title><polygon points="573.2,1037.6 578.2,1046.8 568.3,1046.8" fill="#c29bff"/></g>
 <rect x="0" y="1052.0" width="770" height="18" fill="#30363d" opacity="0.35"/>
-<text x="210" y="1061.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Nested instancing</text>
-<g><title>Nested instancing, Eldr raster + SSGI: 0.97×</title><circle cx="554.6" cy="1061.0" r="4.5" fill="#6ea8fe"/></g>
-<g><title>Nested instancing, Eldr ray traced: 1.02×</title><polygon points="572.4,1055.4 577.4,1061.0 572.4,1066.6 567.5,1061.0" fill="#f0a35e"/></g>
-<g><title>Nested instancing, Karma XPU: 0.99×</title><polygon points="564.0,1055.6 569.0,1064.8 559.1,1064.8" fill="#c29bff"/></g>
-<text x="210" y="1079.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Coloured volume shadows</text>
-<g><title>Coloured volume shadows, Eldr raster + SSGI: 1.00×</title><circle cx="566.6" cy="1079.0" r="4.5" fill="#6ea8fe"/></g>
-<g><title>Coloured volume shadows, Eldr ray traced: 1.00×</title><polygon points="566.4,1073.4 571.3,1079.0 566.4,1084.6 561.4,1079.0" fill="#f0a35e"/></g>
-<g><title>Coloured volume shadows, Karma XPU: 1.19×</title><polygon points="633.8,1073.6 638.8,1082.8 628.9,1082.8" fill="#c29bff"/></g>
+<text x="210" y="1061.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Motion blur in reflections</text>
+<g><title>Motion blur in reflections, Eldr raster + SSGI: 1.05×</title><circle cx="584.6" cy="1061.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>Motion blur in reflections, Eldr ray traced: 1.01×</title><polygon points="571.4,1055.4 576.3,1061.0 571.4,1066.6 566.4,1061.0" fill="#f0a35e"/></g>
+<g><title>Motion blur in reflections, Karma XPU: 1.01×</title><polygon points="569.2,1055.6 574.2,1064.8 564.3,1064.8" fill="#c29bff"/></g>
+<text x="210" y="1079.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Nested instancing</text>
+<g><title>Nested instancing, Eldr raster + SSGI: 0.97×</title><circle cx="554.6" cy="1079.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>Nested instancing, Eldr ray traced: 1.02×</title><polygon points="572.4,1073.4 577.4,1079.0 572.4,1084.6 567.5,1079.0" fill="#f0a35e"/></g>
+<g><title>Nested instancing, Karma XPU: 0.99×</title><polygon points="564.0,1073.6 569.0,1082.8 559.1,1082.8" fill="#c29bff"/></g>
 <rect x="0" y="1088.0" width="770" height="18" fill="#30363d" opacity="0.35"/>
-<text x="210" y="1097.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Volume motion blur</text>
-<g><title>Volume motion blur, Eldr raster + SSGI: 1.01×</title><circle cx="571.9" cy="1097.0" r="4.5" fill="#6ea8fe"/></g>
-<g><title>Volume motion blur, Eldr ray traced: 1.01×</title><polygon points="570.5,1091.4 575.5,1097.0 570.5,1102.6 565.6,1097.0" fill="#f0a35e"/></g>
-<g><title>Volume motion blur, Karma XPU: 0.99×</title><polygon points="563.0,1091.6 568.0,1100.8 558.1,1100.8" fill="#c29bff"/></g>
-<text x="210" y="1115.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Cryptomatte</text>
-<g><title>Cryptomatte, Eldr raster + SSGI: 0.99×</title><circle cx="564.6" cy="1115.0" r="4.5" fill="#6ea8fe"/></g>
-<g><title>Cryptomatte, Eldr ray traced: 1.00×</title><polygon points="567.7,1109.4 572.7,1115.0 567.7,1120.6 562.8,1115.0" fill="#f0a35e"/></g>
-<g><title>Cryptomatte, Karma XPU: 1.02×</title><polygon points="574.6,1109.6 579.6,1118.8 569.7,1118.8" fill="#c29bff"/></g>
+<text x="210" y="1097.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Coloured volume shadows</text>
+<g><title>Coloured volume shadows, Eldr raster + SSGI: 1.00×</title><circle cx="566.6" cy="1097.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>Coloured volume shadows, Eldr ray traced: 1.00×</title><polygon points="566.4,1091.4 571.3,1097.0 566.4,1102.6 561.4,1097.0" fill="#f0a35e"/></g>
+<g><title>Coloured volume shadows, Karma XPU: 1.19×</title><polygon points="633.8,1091.6 638.8,1100.8 628.9,1100.8" fill="#c29bff"/></g>
+<text x="210" y="1115.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Volume motion blur</text>
+<g><title>Volume motion blur, Eldr raster + SSGI: 1.01×</title><circle cx="571.9" cy="1115.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>Volume motion blur, Eldr ray traced: 1.01×</title><polygon points="570.5,1109.4 575.5,1115.0 570.5,1120.6 565.6,1115.0" fill="#f0a35e"/></g>
+<g><title>Volume motion blur, Karma XPU: 0.99×</title><polygon points="563.0,1109.6 568.0,1118.8 558.1,1118.8" fill="#c29bff"/></g>
 <rect x="0" y="1124.0" width="770" height="18" fill="#30363d" opacity="0.35"/>
-<text x="210" y="1133.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">AOVs and light groups</text>
-<g><title>AOVs and light groups, Eldr raster + SSGI: 0.97×</title><circle cx="554.6" cy="1133.0" r="4.5" fill="#6ea8fe"/></g>
-<g><title>AOVs and light groups, Eldr ray traced: 0.97×</title><polygon points="556.3,1127.4 561.2,1133.0 556.3,1138.6 551.3,1133.0" fill="#f0a35e"/></g>
-<g><title>AOVs and light groups, Karma XPU: 1.02×</title><polygon points="574.7,1127.6 579.7,1136.8 569.8,1136.8" fill="#c29bff"/></g>
-<text x="210" y="1151.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Tiled rendering</text>
-<g><title>Tiled rendering, Eldr raster + SSGI: 0.69×</title><circle cx="460.4" cy="1151.0" r="4.5" fill="#6ea8fe"/></g>
-<g><title>Tiled rendering, Eldr ray traced: 0.63×</title><polygon points="437.7,1145.4 442.6,1151.0 437.7,1156.6 432.7,1151.0" fill="#f0a35e"/></g>
-<g><title>Tiled rendering, Karma XPU: 1.01×</title><polygon points="570.8,1145.6 575.8,1154.8 565.9,1154.8" fill="#c29bff"/></g>
+<text x="210" y="1133.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Cryptomatte</text>
+<g><title>Cryptomatte, Eldr raster + SSGI: 0.99×</title><circle cx="564.6" cy="1133.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>Cryptomatte, Eldr ray traced: 1.00×</title><polygon points="567.7,1127.4 572.7,1133.0 567.7,1138.6 562.8,1133.0" fill="#f0a35e"/></g>
+<g><title>Cryptomatte, Karma XPU: 1.02×</title><polygon points="574.6,1127.6 579.6,1136.8 569.7,1136.8" fill="#c29bff"/></g>
+<text x="210" y="1151.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">AOVs and light groups</text>
+<g><title>AOVs and light groups, Eldr raster + SSGI: 0.97×</title><circle cx="554.6" cy="1151.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>AOVs and light groups, Eldr ray traced: 0.97×</title><polygon points="556.3,1145.4 561.2,1151.0 556.3,1156.6 551.3,1151.0" fill="#f0a35e"/></g>
+<g><title>AOVs and light groups, Karma XPU: 1.02×</title><polygon points="574.7,1145.6 579.7,1154.8 569.8,1154.8" fill="#c29bff"/></g>
+<rect x="0" y="1160.0" width="770" height="18" fill="#30363d" opacity="0.35"/>
+<text x="210" y="1169.0" text-anchor="end" dominant-baseline="middle" fill="#e6edf3">Tiled rendering</text>
+<g><title>Tiled rendering, Eldr raster + SSGI: 0.69×</title><circle cx="460.4" cy="1169.0" r="4.5" fill="#6ea8fe"/></g>
+<g><title>Tiled rendering, Eldr ray traced: 0.63×</title><polygon points="437.7,1163.4 442.6,1169.0 437.7,1174.6 432.7,1169.0" fill="#f0a35e"/></g>
+<g><title>Tiled rendering, Karma XPU: 1.01×</title><polygon points="570.8,1163.6 575.8,1172.8 565.9,1172.8" fill="#c29bff"/></g>
 </svg>

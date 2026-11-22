@@ -9,7 +9,8 @@
 // Ray tracing's displaced meshes (RayTracing, Frame::rtDisplacement): their
 // rest vertices moved along the normal as mesh.vert moves them
 // (displace.glsl, specialized with kDisplacement; graphs too), object-space
-// positions for their BLASes. x: vertex, y: the job.
+// positions for their BLASes; moving points (deformation blur) also along
+// their velocities, to each time sample's time. x: vertex, y: the job.
 // Per mesh, as its first instance; graphs reading per-instance inputs
 // (world-space position or normal, instance primvars) per instance too
 // (RayTracing::Work::displacedInstances).
@@ -23,6 +24,8 @@ struct RtDisplaced {
 };
 layout(std430, set = 1, binding = 6) writeonly buffer RtDisplacedVertices { float rtDisplacedVertices[]; };
 layout(std430, set = 1, binding = 7) readonly buffer RtDisplacedTable { RtDisplaced rtDisplaced[]; };
+// Moving points' velocities (object units per frame; mesh.vert's).
+layout(std430, set = 0, binding = 33) readonly buffer Velocities { vec4 velocities[]; };
 
 layout(local_size_x = 64) in;
 
@@ -42,6 +45,10 @@ void main()
                       unpackHalf2x16(floatBitsToUint(rtVertices[rest + 9u])).x);  // rt.glsl's RtColor
     vec3 p = Displace(position, normal, d, job.instance, InstanceTransform(instances[job.instance]), color,
                       d.vertexBase + v, uv);
+    // At the time sample's time, as mesh.vert (Scene::Gpu::SlotGeometry::moving).
+    if (d.velocities != kFreeSlot && frame.deform.y != 0.0) {
+        p += velocities[d.velocities + v].xyz * frame.deform.x;
+    }
     uint out0 = (job.firstVertex + v) * 3u;
     rtDisplacedVertices[out0] = p.x;
     rtDisplacedVertices[out0 + 1u] = p.y;

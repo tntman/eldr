@@ -232,7 +232,7 @@ float SunTileShadow(uint index, vec3 x, vec3 l)
     if (any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
         return 1.0;
     }
-    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, ndc.z * 0.5 + 0.5));
+    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, min(ndc.z * 0.5 + 0.5, kShadowFarRef)));
 }
 
 // A local light's atlas tiles at a point in the medium, as fog_inject.comp
@@ -258,7 +258,7 @@ float LocalShadow(uint index, vec3 x)
     if (clip.w <= 0.0 || any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
         return 1.0;  // outside a spot's tile: its cone doesn't light it anyway
     }
-    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, ndc.z * 0.5 + 0.5));
+    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, min(ndc.z * 0.5 + 0.5, kShadowFarRef)));
 }
 
 // Light of a sphere/rect/disk light arriving at x, as from a point (its
@@ -270,11 +270,11 @@ vec3 LocalIrradiance(uint index, vec3 x, out vec3 l)
     vec3 toLight = light.position.xyz - x;
     float d = length(toLight);
     l = toLight / max(d, 1e-8);
-    float window = clamp(1.0 - pow(d / LightRange(light), 4.0), 0.0, 1.0);
+    float window = LightWindow(light, index, d);
     if (window <= 0.0 || d <= 0.0) {
         return vec3(0.0);
     }
-    vec3 radiance = light.color.rgb * LightTint(light, x) * window * window * light.halfHeight.w;
+    vec3 radiance = light.color.rgb * LightTint(light, x) * window * light.halfHeight.w;
     float cosOff = dot(-l, light.axis.xyz);
     if (light.shaping.z > 0.0) {
         radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
