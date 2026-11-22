@@ -1724,6 +1724,7 @@ void Renderer::WaitForPrewarm()
 // Frame::shadowResolution changes. The GPU is idle there.
 void Renderer::_CreateShadowMap(uint32_t size)
 {
+    _cascadesKey.clear();
     for (VkImageView &v : _shadowLayers) {
         vkDestroyImageView(_dev.device, v, nullptr);
         v = VK_NULL_HANDLE;
@@ -4024,7 +4025,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _dev.Reserve(_cameraCommands, VkDeviceSize(std::max(gpu.drawCount, 1u)) * sizeof(VkDrawIndexedIndirectCommand),
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     // Last frame's joints exist when the pool is still the buffer they were
-    // built in (it is rebuilt by every frame's skin.comp).
+    // built in (skin.comp rebuilds it when the scene's pools change).
     // Sampled motion: the scene's joints one frame before as the shutter
     // continues (Gpu::shutterJoints) stand in for them, first frame too.
     const bool shutterJoints = frame.sampledMotion && gpu.shutterJoints && gpu.joints && gpu.jointsBytes > 0;
@@ -4072,8 +4073,15 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.moving = timeSample || _shutterMoved;
     if (rayTracing) {
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
-        rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
-        rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
+        // A film's samples pick the same instances (a walk over every instance of the scene).
+        if (!(SampleReuse() && _rtPicks.scene == gpu.sceneId && _rtPicks.version == gpu.version &&
+              _rtPicks.capacity == rt.skinnedCapacity && std::equal(frame.cameraPos, frame.cameraPos + 3, _rtPicks.eye))) {
+            _rtPicks = {gpu.sceneId, gpu.version, {frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]},
+                        rt.skinnedCapacity, scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity),
+                        scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances)};
+        }
+        rt.skinned = _rtPicks.skinned;
+        rt.displacedInstances = _rtPicks.displaced;
         lap("ray tracing instances", 5.0);
         const auto rtStart = std::chrono::steady_clock::now();
         _rt->WaitPipelines(rt);
@@ -4141,7 +4149,26 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                      kCascades,
                                      translucentShadows || localVolumeShadows ? kShadowAtlasSize / divisor : 1u)) {
         _atlasVersion = 0;
+        _cascadesKey.clear();
     }
+    // The sun's cascades as a film's last sample drew them, when this one
+    // would draw the same: the same matrices (no jittered sun, lens point
+    // or shutter time between) of a scene the film found unchanged. They
+    // stay then, with their tint maps and the soft shadows' levels. From
+    // the third sample on: shadows draw the camera's levels of detail,
+    // which settle in the first.
+    // ponytail: volumes' sun shadows draw every sample.
+    std::vector<float> cascadesKey;
+    if (shadows && draw) {
+        cascadesKey.assign(&fd.cascadeViewProj[0][0], &fd.cascadeViewProj[0][0] + 16 * cascades);
+        for (const uint32_t v : {cascades, _shadowSize, gpu.shadowLinkBit, uint32_t(translucentShadows), uint32_t(_shadowTints),
+                                 fd.features[3], _transparency.SunTint().size}) {
+            cascadesKey.push_back(float(v));
+        }
+    }
+    const bool cascadesKept = SampleReuse() && shadows && draw && film && _filmSamples > 2 && !timeSample &&
+                              !_shutterMoved && !volumeShadows && cascadesKey == _cascadesKey;
+    _cascadesKey = std::move(cascadesKey);
     if (translucentShadows || volumeShadows || localVolumeShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
@@ -4312,7 +4339,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         for (uint32_t k = 0; k <= kCascades; ++k) {
             resets[k] = {0, k * commandBytes, commandBytes};
         }
-        vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, 1 + cascades, resets);
+        vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, 1 + (cascadesKept ? 0 : cascades), resets);
         // Levels of detail of another scene's (or pool's) instances mean
         // nothing here: no last level, nothing to fade from.
         // (A destroyed scene's buffer handle can come back for a new one: the scene counts too.)
@@ -4542,7 +4569,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // Each cascade's ortho box (which spans the scene's whole depth
         // towards the light, so every caster in it stays), all in one
         // dispatch (cull.comp's kAllCascades: each instance read once).
-        if (cascades > 0) {
+        if (cascades > 0 && !cascadesKept) {
             cull.listBase = 0xFFFFFFFFu;  // kAllCascades
             cull.minRadius = std::max(frame.shadowCullPixels, 0.0f);  // in shadow texels
             cull.commandBase = cascades;
@@ -4597,7 +4624,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Shadow cascades. Without a shadow light the map is only transitioned so
     // its descriptor is valid; the shader never samples it.
     const VkImageSubresourceRange shadowRange = Range(VK_IMAGE_ASPECT_DEPTH_BIT, kCascades);
-    if (shadows) {
+    if (cascadesKept) {
+        // In SHADER_READ_ONLY_OPTIMAL from when they were drawn.
+    } else if (shadows) {
         ImageBarrier(_cmd, _shadowMap.image, shadowRange, VK_PIPELINE_STAGE_2_NONE, 0,
                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,

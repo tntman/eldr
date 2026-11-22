@@ -1026,6 +1026,16 @@ private:
     uint64_t _atlasVersion = 0;
     bool _fullShadowAtlas = false;  // _shadowAtlas is kShadowAtlasSize square (_CreateShadowAtlas)
     std::vector<float> _atlasKey;               // the tiles' matrices and rects
+    std::vector<float> _cascadesKey;            // the sun cascades as last drawn: their matrices, size, tint maps
+    // The skinned and displaced instances rays see (Scene::LargestSkinned,
+    // LargestDisplacedInstances), kept while the scene and the eye stay.
+    struct RtPicks {
+        uint64_t scene = 0, version = 0;
+        float eye[3] = {};
+        uint32_t capacity = 0;
+        std::vector<Scene::SkinnedInstance> skinned;
+        std::vector<Scene::DisplacedInstance> displaced;
+    } _rtPicks;
     VkImageView _shadowLayers[kCascades] = {};  // per-cascade render targets
     Image _brdfLut;
     Image _blackCube;                           // bound when there is no dome
