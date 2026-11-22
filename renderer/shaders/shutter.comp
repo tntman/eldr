@@ -13,7 +13,7 @@
 // blend shape weights.
 // The joints move one matrix per invocation (capture 2): every matrix of the
 // pool belongs to a skinned instance, and a loop over each instance's joints
-// took the crowd's 9,324 agents 7 ms a film sample instead of 1.
+// took the crowd's 9,324 agents (158 MB of joints) 7 ms a film sample instead of 2.
 
 layout(std430, set = 0, binding = 27) readonly buffer Motion { vec4 motionRows[]; };
 layout(std430, set = 0, binding = 69) buffer ShutterRows { vec4 shutterRows[]; };  // 3 per instance slot

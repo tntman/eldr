@@ -4066,15 +4066,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.moving = timeSample || _shutterMoved;
     if (rayTracing) {
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
-        // A film's samples pick the same instances (a walk over every instance of the scene).
-        if (!(sampleReuse && _rtPicks.scene == gpu.sceneId && _rtPicks.version == gpu.version &&
-              _rtPicks.capacity == rt.skinnedCapacity && std::equal(frame.cameraPos, frame.cameraPos + 3, _rtPicks.eye))) {
-            _rtPicks = {gpu.sceneId, gpu.version, {frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]},
-                        rt.skinnedCapacity, scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity),
-                        scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances)};
-        }
-        rt.skinned = _rtPicks.skinned;
-        rt.displacedInstances = _rtPicks.displaced;
+        // ponytail: both walk every instance of the scene each frame (the 9k crowd: 0.6 ms). Not kept
+        // across a film's samples: an instance primvar edit changes the displaced picks' keys without
+        // a new Gpu::version, so a cache needs its own stamp from Scene.
+        rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
+        rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
         lap("ray tracing instances", 5.0);
         const auto rtStart = std::chrono::steady_clock::now();
         _rt->WaitPipelines(rt);
