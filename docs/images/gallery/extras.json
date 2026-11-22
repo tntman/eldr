@@ -1,0 +1,31 @@
+{
+ "cryptomatte": [
+  "The Cryptomatte layers of the same EXRs, each id a colour weighted by its coverage: soft, anti-aliased edges where objects meet. Eldr names objects by prim path (`CryptoObject`) and materials by material path (`CryptoMaterial`), as Karma's Cryptomatte does.",
+  "",
+  "![Cryptomatte: beauty, object and material mattes; Eldr and Karma CPU]({img}features/cryptomatte_mattes.jpg)",
+  ""
+ ],
+ "aovs": [
+  "Its passes, Eldr ray traced (left of each pair) next to Karma CPU (right), from one EXR each: the diffuse and specular splits (`C<RD>.*L`, `C<RG>.*L`), the light refracted through the glass ball (`C<TG>.*L`), the two light groups (`C.*<L.'ceiling'>`, `C.*<L.'lamp'>`), normal (`ray:hitN`, shown as 0.5 + N / 2), depth (`ray:hitPz`, near is bright) and albedo (`CDA`). Eldr's light groups hold the group's direct light; Karma's add its bounced light.",
+  "",
+  "![AOVs: beauty, diffuse, specular, transmission, light groups, normal, depth, albedo; Eldr and Karma CPU]({img}features/aovs_passes.jpg)",
+  ""
+ ],
+ "tiles": [
+  "The tiled image (12 tiles of 512 pixels) against the whole image at once, and their difference ten times brighter: no seams along the tile edges, only a little noise and the chrome ball's reflection, which screen-space reflections find on screen in the whole image and the reflection probe supplies in a tile (traced reflections are the same either way).",
+  "",
+  "![Tiled rendering: tiles, whole image and their difference]({img}features/tiles_whole.jpg)",
+  "",
+  "The same scene (ray tracing off) at growing sizes with its `tiles` settings and 2048-pixel tiles (peak GPU memory above what was in use before the render, sampled by nvidia-smi). The screen-size buffers, about 170 bytes a pixel, stay at the tile's size; only the whole image's bloom, exposure and tonemapping grow with it, about 27 bytes a pixel. A whole 12000 \u00d7 12000 image would need about 24 GB.",
+  "",
+  "| Image | Rendered | Peak GPU memory | Time |",
+  "|---|---|---:|---:|",
+  "| 1920 \u00d7 1080 | 2048-pixel tiles | 0.5 GB | 911 ms |",
+  "| 4096 \u00d7 4096 | 2048-pixel tiles | 0.7 GB | 5.0 s |",
+  "| 8192 \u00d7 8192 | 2048-pixel tiles | 1.9 GB | 19.7 s |",
+  "| 12000 \u00d7 12000 | 2048-pixel tiles | 3.3 GB | 42.9 s |",
+  "| 1920 \u00d7 1080 | whole | 0.5 GB | 951 ms |",
+  "| 4096 \u00d7 4096 | whole | 2.0 GB | 4.6 s |",
+  ""
+ ]
+}
