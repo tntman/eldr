@@ -8,6 +8,9 @@
 // history and current images hold one texel per 2 x 2 block of pixels,
 // traced from the block's first pixel (ssr_trace.frag): passes 0 and 1 run
 // over the blocks, pass 2 over the pixels.
+// Interleaved (pc.blocks.z > 0): at full resolution, but of the rougher
+// surfaces only one pixel of each 2 x 2 block has a ray (a pdf above 0),
+// another each frame; pass 0 gives the others their neighbours' rays.
 
 layout(set = 0, binding = 0) uniform sampler2D sceneDepth;  // window depth [0, 1]
 layout(set = 0, binding = 1) uniform sampler2D rays;        // radiance along the ray, its pdf
@@ -26,19 +29,20 @@ layout(push_constant) uniform DenoiseParams {
     mat4 prevViewProj;  // world -> last frame's clip
     vec4 eye;           // camera position; w: noise index
     vec4 params;        // x: kDimSsrDenoise's value (< 0: gradient noise), history valid, 1/width, 1/height
-    vec4 splits;        // x: 1 adds the result to the light splits, y: the indirect intensity (colour only),
-                        // z: pixels per block's side (1, 2), w: 1 = the blocks' rays as traced (no passes 0, 1)
+    vec4 splits;        // x: 1 adds the result to the light splits, y: the indirect intensity (colour only)
+    vec4 blocks;        // x: pixels per block's side (1, 2), y: 1 = the blocks' rays as traced (no passes 0, 1),
+                        // z: interleaved, 1 + the pixel of each block that has a ray (x + 2 y)
 } pc;
 
 // A block's pixel (the one its ray is traced from) and the last block.
 ivec2 Pixel(ivec2 block)
 {
-    return block * int(pc.splits.z);
+    return block * int(pc.blocks.x);
 }
 
 ivec2 LastBlock()
 {
-    return (textureSize(sceneDepth, 0) - 1) / int(pc.splits.z);
+    return (textureSize(sceneDepth, 0) - 1) / int(pc.blocks.x);
 }
 
 #if PASS == 2
@@ -130,6 +134,17 @@ vec4 Spatial(ivec2 q)
         float r = k == 0 ? 0.0 : radius * sqrt(float(k) / 8.0);
         float phi = angle + 2.39996323 * float(k);
         ivec2 s = clamp(q + ivec2(round(r * vec2(cos(phi), sin(phi)))), ivec2(0), maxQ);
+        if (pc.blocks.z > 0.0 && texelFetch(rays, s, 0).w <= 0.0) {
+            // Interleaved, no ray here this frame: the nearest traced
+            // pixel's (the pixel's own tap picks one of the nearest at
+            // random, 0.7 pixels out: over the frames a tent, not a block).
+            int which = int(pc.blocks.z) - 1;
+            vec2 o = vec2(which & 1, which >> 1);
+            s = 2 * ivec2(floor((vec2(q) + max(r, 0.7) * vec2(cos(phi), sin(phi)) - o) * 0.5 + 0.5)) + ivec2(o);
+            if (any(lessThan(s, ivec2(0))) || any(greaterThan(s, maxQ)) || texelFetch(rays, s, 0).w <= 0.0) {
+                continue;
+            }
+        }
         if (texelFetch(factor, Pixel(s), 0).a <= 0.0) {
             continue;
         }
@@ -186,9 +201,9 @@ vec4 Temporal(ivec2 q)
     if (clip.w <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
         return vec4(c.rgb, luma * luma);
     }
-    if (pc.splits.z > 1.0) {
+    if (pc.blocks.x > 1.0) {
         // In blocks: a block's texel is centred on its first pixel.
-        uv = ((uv / pc.params.zw - 0.5) / pc.splits.z + 0.5) / vec2(textureSize(history, 0));
+        uv = ((uv / pc.params.zw - 0.5) / pc.blocks.x + 0.5) / vec2(textureSize(history, 0));
     }
     vec4 h = textureLod(history, uv, 0.0);
     if (any(isnan(h)) || any(isinf(h))) {
@@ -212,12 +227,12 @@ vec4 Temporal(ivec2 q)
 // Then, denoised, the bilateral filter over the 3 x 3 blocks around it.
 vec3 FromBlocks(ivec2 q)
 {
-    bool traced = pc.splits.w > 0.0;
+    bool traced = pc.blocks.y > 0.0;
     vec3 p = WorldPos(q);
     vec3 n = OctDecode(texelFetch(normals, q, 0).xy);
     float plane = 0.02 * length(p - pc.eye.xyz);
     ivec2 last = LastBlock();
-    vec2 h = vec2(q) / pc.splits.z;  // in blocks, whole at their pixels
+    vec2 h = vec2(q) / pc.blocks.x;  // in blocks, whole at their pixels
     ivec2 base = ivec2(floor(h));
     vec2 t = h - vec2(base);
     vec4 same = vec4(0.0), near = vec4(0.0);  // rgb, luma^2 (denoised); the surface's blocks with and without its normal
@@ -276,7 +291,7 @@ vec4 Composite(ivec2 q)
         return vec4(0.0);
     }
     vec3 c;
-    if (pc.splits.z > 1.0) {
+    if (pc.blocks.x > 1.0) {
         c = FromBlocks(q);
     } else {
         vec4 center = texelFetch(current, q, 0);

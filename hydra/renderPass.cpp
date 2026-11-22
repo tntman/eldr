@@ -526,6 +526,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
                                 {t2.ssrBackfaceDepth, &frame.ssrBackfaceDepth},
+                                {t2.ssrInterleave, &frame.ssrInterleave},
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}, {t2.denoise, &frame.denoise},
                                 {t2.adaptiveTiles, &frame.adaptiveTiles}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);

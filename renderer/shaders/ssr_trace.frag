@@ -8,6 +8,9 @@
 // needs (frame.ssr.z 2: a GGX-sampled ray for the denoiser, 3: the mirror
 // ray). Writes the ray's radiance and pdf, and its direction, hit distance
 // and GGX alpha per block.
+// Interleaved (frame.ssr.z 4, Frame::ssrInterleave): the block's pixel
+// changes every frame (pc.blocks.z) and its ray goes into the pixel's own
+// texels of the full-resolution images, unless mesh.frag traced it.
 
 #include "frame.glsl"
 
@@ -15,14 +18,23 @@ layout(set = 0, binding = 11) uniform sampler2D ambientOcclusion;
 layout(set = 0, binding = 12) uniform sampler2D previousColor;
 layout(set = 0, binding = 76) uniform sampler2DArray previousSplits;
 layout(set = 0, binding = 13) uniform sampler2D sceneDepth;
-layout(set = 0, binding = 72, rgba16f) uniform readonly image2D ssrSurface;       // the reflection without a hit, GGX alpha
-layout(set = 0, binding = 73, rgba16f) uniform writeonly image2D ssrDirections;  // per block
+layout(set = 0, binding = 72, rgba16f) uniform image2D ssrSurface;     // the reflection without a hit, GGX alpha
+layout(set = 0, binding = 73, rgba16f) uniform image2D ssrDirections;  // per block
 layout(set = 0, binding = 74, rgba16f) uniform readonly image2D ssrNormals;       // normal, geometric normal (octahedral)
 layout(set = 0, binding = 75, rgba16f) uniform readonly image2D ssrFactor;        // a > 0: reflects
 
 #include "ssr_trace.glsl"
 
 layout(location = 0) out vec4 outRay;
+
+layout(push_constant) uniform DenoiseParams {  // ssr_denoise.frag's
+    mat4 invViewProj;
+    mat4 prevViewProj;
+    vec4 eye;
+    vec4 params;
+    vec4 splits;
+    vec4 blocks;  // z: interleaved, 1 + the block's pixel (x + 2 y)
+} pc;
 
 float SignNotZero(float x)
 {
@@ -46,17 +58,24 @@ vec3 OctDecode(vec2 e)
 
 void main()
 {
-    ivec2 q = ivec2(gl_FragCoord.xy), px = 2 * q;
+    bool interleaved = pc.blocks.z > 0.0;
+    int which = int(pc.blocks.z) - 1;
+    ivec2 q = ivec2(gl_FragCoord.xy), px = 2 * q + (interleaved ? ivec2(which & 1, which >> 1) : ivec2(0));
     outRay = vec4(0.0);
-    if (imageLoad(ssrFactor, px).a <= 0.0) {
+    if (any(greaterThanEqual(px, imageSize(ssrFactor))) || imageLoad(ssrFactor, px).a <= 0.0) {
         return;  // nothing reflects here: the passes after skip the block
     }
     vec2 ndc = (vec2(px) + 0.5) / frame.viewport.xy * 2.0 - 1.0;
     vec3 p = Unproject(vec3(ndc, texelFetch(sceneDepth, px, 0).r * 2.0 - 1.0));
     vec3 v = ViewDirection(p);
     vec4 surface = imageLoad(ssrSurface, px), normals = imageLoad(ssrNormals, px);
+    if (interleaved && surface.a > 0.0) {
+        return;  // a smooth surface: mesh.frag traced it
+    }
     vec3 n = OctDecode(normals.xy);
-    float a = surface.a, pdf = 1.0, cone = 2.0 * a;
+    float a = interleaved ? imageLoad(ssrDirections, px).w : surface.a, pdf = 1.0, cone = 2.0 * a;
+    // Interleaved, each pixel has its own sequence of samples (every fourth frame's).
+    vec2 noisePixel = interleaved ? vec2(px) : gl_FragCoord.xy;
     vec3 l = reflect(-v, n);
     if (frame.ssr.z < 3.0) {
         // As mesh.frag's denoised ray.
@@ -64,9 +83,9 @@ void main()
         vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
         vec2 u;
         if (frame.sampleInfo.x != 0u) {
-            u = vec2(SampleNoise(kDimSsrGgx, gl_FragCoord.xy, 0.0), SampleNoise(kDimSsrGgx2, gl_FragCoord.xy, 0.0));
+            u = vec2(SampleNoise(kDimSsrGgx, noisePixel, 0.0), SampleNoise(kDimSsrGgx2, noisePixel, 0.0));
         } else {
-            vec2 s = gl_FragCoord.xy + 5.588238 * frame.ssr.y;
+            vec2 s = noisePixel + 5.588238 * frame.ssr.y;
             u = fract(52.9829189 * fract(vec2(dot(s, vec2(0.06711056, 0.00583715)),
                                               dot(s.yx + vec2(19.0, 47.0), vec2(0.06711056, 0.00583715)))));
         }
@@ -83,6 +102,13 @@ void main()
     }
     vec4 hit;
     float w = TraceReflection(p, l, cone, hit);
-    outRay = vec4(mix(surface.rgb, hit.rgb + (1.0 - hit.a) * surface.rgb, w), pdf);
-    imageStore(ssrDirections, q, vec4(OctEncode(l), w > 0.0 ? ssrHitDistance : -1.0, a));
+    vec4 ray = vec4(mix(surface.rgb, hit.rgb + (1.0 - hit.a) * surface.rgb, w), pdf);
+    vec4 direction = vec4(OctEncode(l), w > 0.0 ? ssrHitDistance : -1.0, a);
+    if (interleaved) {
+        imageStore(ssrSurface, px, vec4(ray.rgb, max(pdf, 1e-4)));  // a pdf above 0: it has a ray
+        imageStore(ssrDirections, px, direction);
+    } else {
+        outRay = ray;
+        imageStore(ssrDirections, q, direction);
+    }
 }

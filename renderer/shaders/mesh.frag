@@ -850,14 +850,21 @@ vec3 MultiBounce(float visibility, vec3 albedo)
 
 // Denoised SSR (renderer/ssr.h, frame.ssr.z): the opaque surface's one
 // GGX-sampled ray per pixel, for the denoiser. At a lower resolution
-// (frame.ssr.z >= 2) ssr_trace.frag traces after this pass: ssrRays then
+// (frame.ssr.z 2, 3) ssr_trace.frag traces after this pass: ssrRays then
 // holds what the pixel reflects without a hit and its ray's GGX alpha,
 // ssrNormals the geometric normal too, and ssrDirections is the trace's.
+// Interleaved (4) it traces the rougher surfaces' rays, a quarter of them
+// a frame, into these images: their pixels store a pdf of 0 (no ray yet)
+// and the alpha with the directions.
 layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // radiance along it, its pdf
 layout(set = 0, binding = 73, rgba16f) uniform writeonly image2D ssrDirections;  // octahedral, hit distance, GGX alpha
 layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;     // octahedral
 layout(set = 0, binding = 75, rgba16f) uniform writeonly image2D ssrFactor;      // the reflection's weight, 1 + the share that shows
 #include "ssr_trace.glsl"
+// Interleaved denoised SSR (frame.ssr.z 4): from this perceptual roughness
+// up a surface's rays are traced for a quarter of its pixels a frame (the
+// denoiser's spatial kernel is then at least 2.5 pixels wide).
+const float kSsrInterleaved = 0.2;
 
 // Same SH9 basis order as BuildEnvironment.
 vec3 Irradiance(vec3 d)
@@ -1153,13 +1160,17 @@ void main()
     // it shows through the fog and the surface's presence rides in alpha).
     vec3 ssrAdded = vec3(0.0);
     bool ssrAdds = false;
-    if (frame.ssr.z >= 2.0 && ssrWeight > 0.0 && RtOpaque()) {
+    if (frame.ssr.z >= 2.0 && ssrWeight > 0.0 && RtOpaque() && (frame.ssr.z < 4.0 || perceptual >= kSsrInterleaved)) {
         // At a lower resolution (Frame::movingSsrResolution): ssr_trace.frag
         // traces one pixel of each block after this pass and SsrDenoise
         // adds FssEss times the weight times the reflection. Denoised
         // (frame.ssr.z 2) a GGX-sampled ray, glossy up to roughness 0.8;
         // else (3) the mirror ray along ssrDir, as wide as ssrWidth.
-        const bool glossy = frame.ssr.z < 3.0;
+        // Interleaved (4, Frame::ssrInterleave): the denoised ray of one
+        // pixel of each block, another each frame, for surfaces rough
+        // enough that the denoiser's kernel spans the block; smoother
+        // ones trace here, below.
+        const bool glossy = frame.ssr.z != 3.0, interleaved = frame.ssr.z >= 4.0;
         if (glossy) {
             ssrWeight = 1.0 - smoothstep(0.5, 0.8, perceptual);
 #ifdef LAYERS
@@ -1168,7 +1179,10 @@ void main()
         }
         ivec2 px = ivec2(gl_FragCoord.xy);
         vec3 m = v + ssrDir;  // the mirror ray's normal
-        imageStore(ssrRays, px, vec4(specular, glossy ? a : 0.5 * ssrWidth));
+        imageStore(ssrRays, px, vec4(specular, interleaved ? 0.0 : glossy ? a : 0.5 * ssrWidth));
+        if (interleaved) {
+            imageStore(ssrDirections, px, vec4(0.0, 0.0, -1.0, a));
+        }
         imageStore(ssrNormals, px, vec4(OctEncode(glossy || dot(m, m) < 1e-8 ? n : normalize(m)), OctEncode(ng)));
         ssrAdded = FssEss * ssrWeight;
         ssrAdds = true;

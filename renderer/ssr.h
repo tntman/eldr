@@ -28,6 +28,11 @@ namespace vkr {
 // the denoiser (`denoise` false) the mirror rays go straight to pass 3.
 // ponytail: always the block's first pixel; EEVEE moves it per frame and
 // stretches the spatial kernel along the reflection.
+// Interleaved (Resolve's `interleave`, Frame::ssrInterleave) everything
+// stays at full resolution, but of the surfaces rough enough for pass 1's
+// kernel to span a block (mesh.frag's kSsrInterleaved) ssr_trace.frag
+// traces one pixel of each 2 x 2 block, another each frame, and pass 1
+// gives the pixels without a ray their nearest traced neighbours'.
 class SsrDenoise {
 public:
     static constexpr VkFormat kFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -44,7 +49,8 @@ public:
     // the targets on first use and when `divisor` (1: every pixel traces in
     // mesh.frag, 2: every 2 x 2 block here) changes, which starts the
     // history over. `sceneLayout`: the scene set's (the trace reads it).
-    void Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout);
+    // `trace`: ssr_trace.frag will run (divisor 2, or interleaved).
+    void Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout, bool trace);
     uint32_t Divisor() const { return _divisor; }
 
     // What mesh.frag writes (GENERAL layout; 1 x 1 placeholders until
@@ -62,10 +68,12 @@ public:
     // COLOR_ATTACHMENT_OPTIMAL). Matrices in row-vector order; `history`
     // false starts the history over. `dimension` in [0, 1): the sample
     // dimension's value turning the blue noise (kDimSsrDenoise); < 0:
-    // gradient noise shifted by `noise`.
+    // gradient noise shifted by `noise`. `interleave` (at full resolution):
+    // 0, or 1 + the pixel of each 2 x 2 block (x + 2 y) traced this frame.
     void Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView color, const float invViewProj[16],
                  const float prevViewProj[16], const float eye[3], uint32_t noise, bool history, float dimension,
-                 VkImageView splits, bool addToSplits, float indirect = 1.0f, bool denoise = true);
+                 VkImageView splits, bool addToSplits, float indirect = 1.0f, bool denoise = true,
+                 uint32_t interleave = 0);
     // The 64 x 64 RGBA8 blue noise (Renderer's), before the first Prepare.
     void SetBlueNoise(VkImageView noise) { _blueNoise = noise; }
 
