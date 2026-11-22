@@ -722,6 +722,14 @@ public:
     // until the second Render after; the caller may change it (depth).
     void *HostOutput(int output) const { return _delivered[output]; }
 
+    // A frame keeps the work the last one left the same instead of redoing
+    // it: skinned joints and the pools' copies for motion blur time samples
+    // while the scene's pools stay, and across a film's samples the planar
+    // mirrors' renders, unjittered sun cascades and the instances rays see.
+    // The image is the same either way; HDVK_NO_SAMPLE_REUSE=1 starts with
+    // it off (A/B tests).
+    static bool sampleReuse;
+
     // False while auto-exposure adapts or TAA is still accumulating a still
     // camera: keep rendering frames.
     bool IsConverged() const;

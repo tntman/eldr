@@ -536,15 +536,6 @@ std::vector<uint8_t> BuildBlueNoise()
 // = 0.1; a still camera accumulates Frame::taaSamples.
 constexpr uint32_t kTaaMoving = 9;
 
-// HDVK_NO_SAMPLE_REUSE=1: every frame redoes the work the last one left the
-// same (skinning, the pools' copies for motion blur time samples, planar
-// mirrors' renders), for A/B tests.
-bool SampleReuse()
-{
-    static const bool on = !std::getenv("HDVK_NO_SAMPLE_REUSE");
-    return on;
-}
-
 // HDVK_TIMING: startup laps on stderr (the renderer's construction, a
 // first frame's passes over 5 ms: pipelines compile as they are first used).
 struct StartupLaps {
@@ -567,6 +558,8 @@ struct StartupLaps {
 };
 
 } // namespace
+
+bool Renderer::sampleReuse = !std::getenv("HDVK_NO_SAMPLE_REUSE");
 
 void Renderer::Totals::Add(std::vector<std::pair<std::string, double>> &to, const char *name, double ms)
 {
@@ -3654,7 +3647,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // their levels of detail settled.
     if (_reflections) {
         const bool planarTime = timeSample && frame.planarMotionBlur;
-        if (SampleReuse() && film && _filmSamples > 2 && !timeSample && !_shutterMoved && !lensJitter &&
+        if (sampleReuse && film && _filmSamples > 2 && !timeSample && !_shutterMoved && !lensJitter &&
             _planarsRendered &&
             _reflections->PlanarsSettled() &&
             std::memcmp(frame.viewProj, _planarViewProj, sizeof(_planarViewProj)) == 0) {
@@ -4074,7 +4067,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (rayTracing) {
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
         // A film's samples pick the same instances (a walk over every instance of the scene).
-        if (!(SampleReuse() && _rtPicks.scene == gpu.sceneId && _rtPicks.version == gpu.version &&
+        if (!(sampleReuse && _rtPicks.scene == gpu.sceneId && _rtPicks.version == gpu.version &&
               _rtPicks.capacity == rt.skinnedCapacity && std::equal(frame.cameraPos, frame.cameraPos + 3, _rtPicks.eye))) {
             _rtPicks = {gpu.sceneId, gpu.version, {frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]},
                         rt.skinnedCapacity, scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity),
@@ -4166,7 +4159,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             cascadesKey.push_back(float(v));
         }
     }
-    const bool cascadesKept = SampleReuse() && shadows && draw && film && _filmSamples > 2 && !timeSample &&
+    const bool cascadesKept = sampleReuse && shadows && draw && film && _filmSamples > 2 && !timeSample &&
                               !_shutterMoved && !volumeShadows && cascadesKey == _cascadesKey;
     _cascadesKey = std::move(cascadesKey);
     if (translucentShadows || volumeShadows || localVolumeShadows) {
@@ -4379,7 +4372,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // sample's move is put back after its frame): the joints skin.comp
         // wrote stand, and so do the copies of what stayed (below).
         const Pools pools{gpu.sceneId, gpu.version, gpu.instances, gpu.joints, gpu.blendWeights};
-        const bool reuse = SampleReuse();
+        const bool reuse = sampleReuse;
         const bool skinned = reuse && pools == _skinnedPools;
         if (prevJoints && !shutterJoints && !(skinned && pools == _prevJointsPools && _prevJointsKind == 1)) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};

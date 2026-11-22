@@ -1817,6 +1817,19 @@ int main()
                                          (sampled ? ", sampled in a first frame" : "") + ", 16 time samples: smooth and monotonic (worst " + std::to_string(off) +
                                          ", rise " + std::to_string(up) + ")";
                 Expect(off < 0.025f && up < 0.01f, what.c_str());
+                // Renderer::sampleReuse: the samples skip skin.comp and the
+                // pools' copies; redone every sample, the same image.
+                if (mover == kJoint) {
+                    vkr::Renderer::sampleReuse = false;
+                    const std::vector<float> redone = longRamp(16, &frames, mover, sampled);
+                    vkr::Renderer::sampleReuse = true;
+                    float differs = 0.0f;
+                    for (int x = 0; x < 64; ++x) {
+                        differs = std::max(differs, std::abs(skinned[x] - redone[x]));
+                    }
+                    Expect(differs < 1e-5f, sampled ? "time samples of sampled joints: the same with the samples' shared work redone"
+                                                    : "time samples of joints: the same with the samples' shared work redone");
+                }
             }
         }
 
@@ -3688,7 +3701,14 @@ int main()
             float jitteredPartial = 0, pcssPartial = 0;
             const float jittered = error(film(scene, frame), &jitteredPartial);
             frame.shadowJitter = false;
-            const float pcss = error(film(scene, frame), &pcssPartial);
+            const Image pcssFilm = film(scene, frame);
+            const float pcss = error(pcssFilm, &pcssPartial);
+            // Unjittered, the film's samples keep the sun's cascades
+            // (Renderer::sampleReuse): drawn every sample, the same image.
+            vkr::Renderer::sampleReuse = false;
+            Expect(MaxDifference(pcssFilm, film(scene, frame)) < 1e-5f,
+                   "a film's unjittered sun cascades: the same drawn once or every sample");
+            vkr::Renderer::sampleReuse = true;
             std::printf("shadow jitter: sun penumbra error %.3f over %.0f pixels (PCSS %.3f over %.0f)\n", jittered,
                         jitteredPartial, pcss, pcssPartial);
             Expect(jittered < 0.03f && jitteredPartial >= 8, "shadow jitter: the film converges to the sun's penumbra");
@@ -4275,6 +4295,34 @@ int main()
             const Image on = Render(renderer, scene, frame);
             Expect(off < 0.01f && on.At(32, 16, 0) > 0.8f, "planar reflection of what stands on the mirror");
             Expect(on.At(32, 26, 0) < 0.05f, "planar reflection: the floor's far part reflects the empty sky");
+            {
+                // A film's samples keep the mirror's render (from the third
+                // on): no pass for it then, and the same image as with one
+                // per sample (Renderer::sampleReuse off).
+                vkr::Renderer::Frame f = frame;
+                f.postProcess = true;
+                f.post.autoExposure = false;
+                f.filmRestart = true;
+                f.filmSamples = 8;
+                bool kept = false;
+                auto film = [&] {
+                    vkr::Renderer r(device);
+                    Image img;
+                    for (int i = 0; i < 8; ++i) {
+                        img = Render(r, scene, f);
+                    }
+                    const auto &passes = r.GetStats().passMs;
+                    kept = passes.empty() || std::strcmp(passes.front().first, "planarReflection") != 0;
+                    return img;
+                };
+                const Image held = film();
+                Expect(kept, "planar reflection: a film's samples keep the mirror's render");
+                vkr::Renderer::sampleReuse = false;
+                const Image redone = film();
+                vkr::Renderer::sampleReuse = true;
+                Expect(!kept && MaxDifference(held, redone) < 1e-5f && held.At(32, 16, 0) > 0.5f,
+                       "planar reflection: the same film with a render per sample");
+            }
             Expect(renderer.GetStats().passMs.size() > 0 &&
                        std::strcmp(renderer.GetStats().passMs.front().first, "planarReflection") == 0,
                    "planar reflection: its render is a pass");
