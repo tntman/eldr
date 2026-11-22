@@ -124,7 +124,7 @@ Every scene renders four ways with husk: ● **Eldr raster + SSGI**, every effec
 | [Reflections](docs/gallery.md#reflections) | 256 / 256 | 725 ms <sub>+ 100 ms</sub> | 1.4 s <sub>+ 100 ms</sub> | 430 ms <sub>+ 2.0 s</sub> | 4.3 s <sub>+ 1.2 s</sub> | 1.00× / 1.00× / 1.00× |
 | [Curves, points and hair](docs/gallery.md#curves-points-and-hair) | 256 / 256 | 799 ms <sub>+ < 0.1 s</sub> | 1.6 s <sub>+ 100 ms</sub> | 430 ms <sub>+ 1.3 s</sub> | 1.3 s <sub>+ 920 ms</sub> | 1.02× / 1.02× / 1.00× |
 | [Light shapes](docs/gallery.md#light-shapes) | 256 / 256 | 1.5 s <sub>+ 100 ms</sub> | 3.1 s <sub>+ < 0.1 s</sub> | 1.9 s <sub>+ 2.2 s</sub> | 6.2 s <sub>+ 1.9 s</sub> | 1.12× / 0.99× / 1.01× |
-| [Many lights](docs/gallery.md#many-lights) | 256 / 256 | 9.4 s <sub>+ 100 ms</sub> | 20.3 s <sub>+ 100 ms</sub> | 37.9 s <sub>+ 5.7 s</sub> | 99.0 s <sub>+ 3.0 s</sub> | 0.98× / 0.97× / 1.02× |
+| [Many lights](docs/gallery.md#many-lights) | 256 / 256 | 11.3 s <sub>+ 100 ms</sub> | 24.2 s <sub>+ 100 ms</sub> | 41.1 s <sub>+ 3.7 s</sub> | 108.2 s <sub>+ 3.5 s</sub> | 1.09× / 1.08× / 1.02× |
 | [Volume multiple scattering](docs/gallery.md#volume-multiple-scattering) | 256 / 256 | 5.4 s <sub>+ 100 ms</sub> | 7.4 s <sub>+ 100 ms</sub> | 67.0 s <sub>+ 1.9 s</sub> | 419.0 s <sub>+ 1.0 s</sub> | 0.62× / 1.02× / 1.00× |
 | [Displacement shaders](docs/gallery.md#displacement-shaders) | 256 / 256 | 2.1 s <sub>+ < 0.1 s</sub> | 3.2 s <sub>+ 100 ms</sub> | 1.6 s <sub>+ 2.5 s</sub> | 5.1 s <sub>+ 2.2 s</sub> | 1.00× / 0.99× / 0.99× |
 | [MaterialX BSDF graphs](docs/gallery.md#materialx-bsdf-graphs) | 256 / 256 | 3.1 s <sub>+ < 0.1 s</sub> | 10.1 s <sub>+ 100 ms</sub> | 5.4 s <sub>+ 1.7 s</sub> | 30.3 s <sub>+ 1.2 s</sub> | 0.98× / 1.00× / 0.91× |
@@ -141,6 +141,7 @@ Every scene renders four ways with husk: ● **Eldr raster + SSGI**, every effec
 | [A second sun's shadows](docs/gallery.md#a-second-suns-shadows) | 256 / 256 | 4.0 s <sub>+ 100 ms</sub> | 5.6 s <sub>+ 100 ms</sub> | 9.7 s <sub>+ 2.1 s</sub> | 26.5 s <sub>+ 1.2 s</sub> | 0.99× / 0.98× / 1.01× |
 | [Light and shadow linking](docs/gallery.md#light-and-shadow-linking) | 256 / 256 | 1.0 s <sub>+ < 0.1 s</sub> | 3.1 s <sub>+ < 0.1 s</sub> | 1.8 s <sub>+ 1.6 s</sub> | 4.2 s <sub>+ 1.0 s</sub> | 1.03× / 1.01× / 1.02× |
 | [Colour limit](docs/gallery.md#colour-limit) | 256 / 2048 | 1.4 s <sub>+ < 0.1 s</sub> | 4.8 s <sub>+ 100 ms</sub> | 29.0 s <sub>+ 1.4 s</sub> | 114.0 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
+| [Velocity motion blur](docs/gallery.md#velocity-motion-blur) | 256 / 256 | 755 ms <sub>+ 100 ms</sub> | 1.6 s <sub>+ 100 ms</sub> | 820 ms <sub>+ 1.3 s</sub> | 3.7 s <sub>+ 930 ms</sub> | 0.96× / 0.99× / 1.02× |
 | [Motion blur in reflections](docs/gallery.md#motion-blur-in-reflections) | 256 / 256 | 935 ms <sub>+ 100 ms</sub> | 2.5 s <sub>+ 100 ms</sub> | 3.2 s <sub>+ 1.5 s</sub> | 10.1 s <sub>+ 1.1 s</sub> | 1.05× / 1.01× / 1.01× |
 | [Nested instancing](docs/gallery.md#nested-instancing) | 256 / 256 | 6.3 s <sub>+ < 0.1 s</sub> | 11.7 s <sub>+ 100 ms</sub> | 3.4 s <sub>+ 1.3 s</sub> | 11.3 s <sub>+ 900 ms</sub> | 0.97× / 1.02× / 0.99× |
 | [Coloured volume shadows](docs/gallery.md#coloured-volume-shadows) | 256 / 256 | 4.3 s <sub>+ 100 ms</sub> | 6.0 s <sub>+ 100 ms</sub> | 8.9 s <sub>+ 2.1 s</sub> | 20.9 s <sub>+ 1.2 s</sub> | 1.00× / 1.00× / 1.19× |
@@ -494,6 +495,12 @@ A light can skip objects, and its shadows can skip casters. (`showcase/2026-10-2
 Karma's colour limit clamps how bright emitters and their bounced light can get; a full-HDR option keeps the emitters unclamped for comp. (`showcase/2026-10-29_17_colour_limit`)
 
 ![Colour limit: Eldr raster + SSGI, Eldr ray traced, Karma XPU, Karma CPU](docs/images/gallery/features/colour_limit.jpg)
+
+#### Velocity motion blur
+
+Objects that only author velocities blur along them when velocity blur is on, as in Karma. (`showcase/2026-10-28_02_velocity_blur`)
+
+![Velocity motion blur: Eldr raster + SSGI, Eldr ray traced, Karma XPU, Karma CPU](docs/images/gallery/features/velocity_blur.jpg)
 
 #### Motion blur in reflections
 
