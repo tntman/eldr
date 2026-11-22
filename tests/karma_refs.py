@@ -40,9 +40,9 @@ SPP_SCENE = {"emissive": 2048, "caustics": 1024}  # small emitters, caustics: Ka
 # the sun through the glass, so its caustics would be a fraction of the light's).
 EXTRA_SCENE = {"caustics": "custom float karma:global:colorlimit = 100000"}
 CELLS, REGIONS = (32, 18), (4, 4)
-# lighting/exposure, materials, volumes, transmission, displacement, SSS, caustics
+# lighting/exposure, materials, volumes, transmission, displacement, SSS (and its albedo), caustics
 SCENES = ["cornell", "emissive", "lights", "step4", "sunangle", "mtlx", "glass", "volume", "displacement",
-          "subsurface", "caustics", "transparency_order", "lightlink", "ies"]
+          "subsurface", "subsurface_slab", "caustics", "transparency_order", "lightlink", "ies"]
 CAMERA = "/cam"
 ELDR = [*FINAL_ARGS, "eldr:tonemapper=none", "eldr:autoExposure=false",
         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",

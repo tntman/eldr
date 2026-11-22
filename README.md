@@ -111,7 +111,7 @@ Every scene renders four ways with husk: ● **Eldr raster + SSGI**, every effec
 | [Post-processing](docs/gallery.md#post-processing) | 256 / 512 | 688 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ < 0.1 s</sub> | 14.8 s <sub>+ 1.3 s</sub> | 47.5 s <sub>+ 730 ms</sub> | 0.75× / 1.02× / 1.02× |
 | [Render region](docs/gallery.md#render-region) | 256 / 512 | 259 ms <sub>+ < 0.1 s</sub> | 1.3 s <sub>+ < 0.1 s</sub> | 3.8 s <sub>+ 1.3 s</sub> | 13.2 s <sub>+ 740 ms</sub> | 0.66× / 1.01× / 1.01× |
 | [Subdivision surfaces](docs/gallery.md#subdivision-surfaces) | 256 / 512 | 695 ms <sub>+ < 0.1 s</sub> | 3.0 s <sub>+ 100 ms</sub> | 14.8 s <sub>+ 1.3 s</sub> | 47.9 s <sub>+ 760 ms</sub> | 0.74× / 1.02× / 1.02× |
-| [Subsurface scattering](docs/gallery.md#subsurface-scattering) | 256 / 512 | 872 ms <sub>+ < 0.1 s</sub> | 3.3 s <sub>+ 100 ms</sub> | 21.9 s <sub>+ 1.4 s</sub> | 55.6 s <sub>+ 790 ms</sub> | 0.69× / 1.01× / 1.02× |
+| [Subsurface scattering](docs/gallery.md#subsurface-scattering) | 256 / 512 | 875 ms <sub>+ < 0.1 s</sub> | 3.8 s <sub>+ 100 ms</sub> | 21.9 s <sub>+ 1.4 s</sub> | 55.6 s <sub>+ 790 ms</sub> | 0.69× / 1.03× / 1.02× |
 | [UV sets](docs/gallery.md#uv-sets) | 256 / 512 | 816 ms <sub>+ < 0.1 s</sub> | 2.6 s <sub>+ < 0.1 s</sub> | 9.9 s <sub>+ 1.3 s</sub> | 32.3 s <sub>+ 780 ms</sub> | 0.93× / 1.07× / 1.02× |
 | [Volumes (OpenVDB)](docs/gallery.md#volumes-openvdb) | 256 / 512 | 1.1 s <sub>+ < 0.1 s</sub> | 4.2 s <sub>+ < 0.1 s</sub> | 24.6 s <sub>+ 1.3 s</sub> | 58.3 s <sub>+ 760 ms</sub> | 0.72× / 0.98× / 1.02× |
 | [Glowing panel and bulb](docs/gallery.md#glowing-panel-and-bulb) | 256 / 2048 | 736 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ < 0.1 s</sub> | 7.9 s <sub>+ 1.4 s</sub> | 27.6 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
@@ -119,7 +119,7 @@ Every scene renders four ways with husk: ● **Eldr raster + SSGI**, every effec
 | [Chrome ball in a glowing room](docs/gallery.md#chrome-ball-in-a-glowing-room) | 256 / 2048 | 738 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ 100 ms</sub> | 7.8 s <sub>+ 1.4 s</sub> | 27.7 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
 | [Transparent and presence opacity](docs/gallery.md#transparent-and-presence-opacity) | 256 / 2048 | 1.0 s <sub>+ < 0.1 s</sub> | 3.3 s <sub>+ 100 ms</sub> | 7.9 s <sub>+ 1.5 s</sub> | 29.1 s <sub>+ 1.0 s</sub> | 1.18× / 1.08× / 0.95× |
 | [Material lobes](docs/gallery.md#material-lobes) | 256 / 256 | 2.2 s <sub>+ 100 ms</sub> | 4.0 s <sub>+ 100 ms</sub> | 2.1 s <sub>+ 2.1 s</sub> | 8.1 s <sub>+ 1.3 s</sub> | 0.96× / 0.98× / 0.98× |
-| [Skin, jade and leaves](docs/gallery.md#skin-jade-and-leaves) | 256 / 256 | 1.7 s <sub>+ 100 ms</sub> | 3.6 s <sub>+ 100 ms</sub> | 18.4 s <sub>+ 2.1 s</sub> | 29.9 s <sub>+ 1.2 s</sub> | 0.95× / 0.90× / 1.01× |
+| [Skin, jade and leaves](docs/gallery.md#skin-jade-and-leaves) | 256 / 256 | 1.7 s <sub>+ 100 ms</sub> | 6.0 s <sub>+ 100 ms</sub> | 18.4 s <sub>+ 2.1 s</sub> | 29.9 s <sub>+ 1.2 s</sub> | 0.95× / 0.94× / 1.01× |
 | [Caustics](docs/gallery.md#caustics) | 256 / 256 | 2.0 s <sub>+ < 0.1 s</sub> | 7.5 s <sub>+ 100 ms</sub> | 4.7 s <sub>+ 1.3 s</sub> | 13.9 s <sub>+ 870 ms</sub> | 0.99× / 1.07× / 1.01× |
 | [Reflections](docs/gallery.md#reflections) | 256 / 256 | 725 ms <sub>+ 100 ms</sub> | 1.4 s <sub>+ 100 ms</sub> | 430 ms <sub>+ 2.0 s</sub> | 4.3 s <sub>+ 1.2 s</sub> | 1.00× / 1.00× / 1.00× |
 | [Curves, points and hair](docs/gallery.md#curves-points-and-hair) | 256 / 256 | 799 ms <sub>+ < 0.1 s</sub> | 1.6 s <sub>+ 100 ms</sub> | 430 ms <sub>+ 1.3 s</sub> | 1.3 s <sub>+ 920 ms</sub> | 1.02× / 1.02× / 1.00× |
@@ -127,7 +127,7 @@ Every scene renders four ways with husk: ● **Eldr raster + SSGI**, every effec
 | [Many lights](docs/gallery.md#many-lights) | 256 / 256 | 9.4 s <sub>+ 100 ms</sub> | 20.3 s <sub>+ 100 ms</sub> | 37.9 s <sub>+ 5.7 s</sub> | 99.0 s <sub>+ 3.0 s</sub> | 0.98× / 0.97× / 1.02× |
 | [Volume multiple scattering](docs/gallery.md#volume-multiple-scattering) | 256 / 256 | 5.4 s <sub>+ 100 ms</sub> | 7.4 s <sub>+ 100 ms</sub> | 67.0 s <sub>+ 1.9 s</sub> | 419.0 s <sub>+ 1.0 s</sub> | 0.62× / 1.02× / 1.00× |
 | [Displacement shaders](docs/gallery.md#displacement-shaders) | 256 / 256 | 2.1 s <sub>+ < 0.1 s</sub> | 3.2 s <sub>+ 100 ms</sub> | 1.6 s <sub>+ 2.5 s</sub> | 5.1 s <sub>+ 2.2 s</sub> | 1.00× / 0.99× / 0.99× |
-| [MaterialX BSDF graphs](docs/gallery.md#materialx-bsdf-graphs) | 256 / 256 | 3.1 s <sub>+ < 0.1 s</sub> | 9.7 s <sub>+ 100 ms</sub> | 5.4 s <sub>+ 1.7 s</sub> | 30.3 s <sub>+ 1.2 s</sub> | 0.98× / 1.00× / 0.91× |
+| [MaterialX BSDF graphs](docs/gallery.md#materialx-bsdf-graphs) | 256 / 256 | 3.1 s <sub>+ < 0.1 s</sub> | 10.1 s <sub>+ 100 ms</sub> | 5.4 s <sub>+ 1.7 s</sub> | 30.3 s <sub>+ 1.2 s</sub> | 0.98× / 1.00× / 0.91× |
 | [MaterialX and Karma nodes](docs/gallery.md#materialx-and-karma-nodes) | 256 / 256 | 2.0 s <sub>+ < 0.1 s</sub> | 3.0 s <sub>+ 100 ms</sub> | 15.9 s <sub>+ 1.7 s</sub> | 6.8 s <sub>+ 1.3 s</sub> | 1.19× / 1.19× / 1.18× |
 | [Objects without a material](docs/gallery.md#objects-without-a-material) | 256 / 256 | 2.3 s <sub>+ < 0.1 s</sub> | 4.0 s <sub>+ 100 ms</sub> | 3.7 s <sub>+ 1.4 s</sub> | 5.0 s <sub>+ 900 ms</sub> | 1.01× / 1.02× / 0.99× |
 | [Texture colour spaces and UDIMs](docs/gallery.md#texture-colour-spaces-and-udims) | 256 / 256 | 843 ms <sub>+ < 0.1 s</sub> | 2.1 s <sub>+ < 0.1 s</sub> | 15.3 s <sub>+ 1.5 s</sub> | 30.5 s <sub>+ 1.2 s</sub> | 0.98× / 1.03× / 0.96× |
@@ -146,7 +146,7 @@ Every scene renders four ways with husk: ● **Eldr raster + SSGI**, every effec
 | [Coloured volume shadows](docs/gallery.md#coloured-volume-shadows) | 256 / 256 | 4.3 s <sub>+ 100 ms</sub> | 6.0 s <sub>+ 100 ms</sub> | 8.9 s <sub>+ 2.1 s</sub> | 20.9 s <sub>+ 1.2 s</sub> | 1.00× / 1.00× / 1.19× |
 | [Volume motion blur](docs/gallery.md#volume-motion-blur) | 256 / 256 | 10.3 s <sub>+ < 0.1 s</sub> | 15.4 s <sub>+ 100 ms</sub> | 3.9 s <sub>+ 1.7 s</sub> | 9.0 s <sub>+ 1.1 s</sub> | 1.01× / 1.01× / 0.99× |
 | [Cryptomatte](docs/gallery.md#cryptomatte) | 256 / 256 | 2.9 s <sub>+ < 0.1 s</sub> | 5.3 s <sub>+ < 0.1 s</sub> | 4.1 s <sub>+ 1.6 s</sub> | 17.9 s <sub>+ 1.2 s</sub> | 0.99× / 1.00× / 1.02× |
-| [AOVs and light groups](docs/gallery.md#aovs-and-light-groups) | 256 / 256 | 2.6 s <sub>+ < 0.1 s</sub> | 6.1 s <sub>+ 100 ms</sub> | 100.7 s <sub>+ 2.1 s</sub> | 18.5 s <sub>+ 1.4 s</sub> | 0.97× / 0.96× / 1.02× |
+| [AOVs and light groups](docs/gallery.md#aovs-and-light-groups) | 256 / 256 | 2.6 s <sub>+ < 0.1 s</sub> | 6.3 s <sub>+ 100 ms</sub> | 100.7 s <sub>+ 2.1 s</sub> | 18.5 s <sub>+ 1.4 s</sub> | 0.97× / 0.97× / 1.02× |
 | [Tiled rendering](docs/gallery.md#tiled-rendering) | 256 / 2048 | 5.6 s <sub>+ < 0.1 s</sub> | 17.5 s <sub>+ 100 ms</sub> | 186.0 s <sub>+ 1.8 s</sub> | 846.4 s <sub>+ 1.2 s</sub> | 0.69× / 0.63× / 1.01× |
 
 [docs/gallery.md](docs/gallery.md) has the methodology.

@@ -369,6 +369,10 @@ public:
         // The blur's profile: Burley's normalized diffusion (as Karma's),
         // else a Gaussian per channel.
         bool subsurfaceBurley = true;
+        // Ray-traced subsurface (needs subsurface and Device::rayTracing;
+        // RayTracing::Work::subsurface): thick subsurface materials take a
+        // random walk inside their mesh per pixel instead of the blur.
+        bool rtSubsurface = false;
         // Holdouts (Mesh::holdout): black with zero alpha; off: drawn as
         // usual.
         bool holdouts = true;
@@ -845,7 +849,8 @@ private:
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
     void _RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj);
     void _RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
-                           const float *invViewProj, VkRenderingAttachmentInfo depth, bool splits);
+                           const float *invViewProj, VkRenderingAttachmentInfo depth, bool splits,
+                           VkImageView traced);
     void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,
                              uint32_t motion, VkRenderingAttachmentInfo depth);
 

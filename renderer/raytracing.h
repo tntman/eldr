@@ -48,6 +48,7 @@ struct RayTracingData {
     uint32_t temporal[4];
     float temporalCamera[4];
     float temporalViewProj[16];  // the last frame's camera, jitter included
+    uint32_t subsurface[4];      // x: steps of a traced subsurface walk (Work::subsurfaceSteps)
 };
 constexpr uint32_t kMaxGatherRays = 16;
 constexpr uint32_t kMaxCausticLights = 8;
@@ -84,6 +85,12 @@ public:
         bool refractionClip = true;
         // Paths per pixel through rough glass (1..16; eldr:refractQuality).
         uint32_t refractionRays = 1;
+        // Traced subsurface (rt_subsurface.rgen): per pixel of a thick
+        // subsurface material a random walk inside its mesh, lit where it
+        // leaves, for Subsurface::Blur in place of the blur; at most this
+        // many steps.
+        bool subsurface = false;
+        uint32_t subsurfaceSteps = 32;
         uint32_t shadowLights[kMaxRtShadowLights] = {};  // per channel of the shadow image, kNone after the last
         float shadowSample[2] = {};  // the sample dimensions' point on the light shapes (frame.sampleInfo.x)
         // Translucent casters tint the traced shadows (Frame::rtTranslucentShadows):
@@ -202,6 +209,10 @@ public:
     void Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::Gpu &gpu,
                 const std::function<void(const char *)> &pass);
 
+    // With Work::subsurface: the traced subsurface light per pixel (rgb; a 1
+    // where a walk ran), GENERAL, for Subsurface::Blur. Null without.
+    VkImageView SubsurfaceView() const { return _subsurfaceImage.view; }
+
     // Frees the acceleration structures (when ray tracing is switched off).
     void Release();
 
@@ -271,7 +282,7 @@ private:
     void _CreatePipelines(VkDescriptorSetLayout sceneLayout);  // layouts and the set
     // The ray tracing pipelines, one per ray generation shader (each with the
     // misses and hit groups), and their shader binding tables.
-    enum Raygen { kPixels, kProbes, kRefraction, kPhotons, kRaygens };
+    enum Raygen { kPixels, kProbes, kRefraction, kPhotons, kSubsurface, kRaygens };
     void _CompileCompute();
     void _CompileRaygen(Raygen k);
     void _Start(int job);  // its compile on a thread, once; kRaygens: the compute pipelines
@@ -347,6 +358,7 @@ private:
     Buffer _uniforms;  // RayTracingData
     Image _shadowImage, _reflectionImage;
     Image _refractionImage;  // with Work::refraction: rt_refraction.rgen's
+    Image _subsurfaceImage;  // with Work::subsurface: rt_subsurface.rgen's (set 1 binding 19)
     // With Work::caustics: the photons' count, hash grid heads and photons
     // (caustics.glsl), binding 92 of the scene set.
     Buffer _photons;

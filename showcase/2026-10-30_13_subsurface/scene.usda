@@ -139,6 +139,7 @@ def Scope "Render"
         custom int eldr:rtShadowLights = 16
         custom int eldr:rtShadowSamples = 1
         custom bool eldr:rtShadows = 1
+        custom bool eldr:rtSubsurface = 1
     }
     def RenderSettings "karma"
     {

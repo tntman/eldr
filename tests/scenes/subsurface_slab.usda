@@ -1,0 +1,123 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Subsurface albedo: four boxes (1.6 x 1 x 1.6) seen from above under a
+# uniform white dome of intensity 1, standard_surface without specular, so
+# a box top reads its diffuse albedo. All are colour (0.9, 0.6, 0.35): a
+# diffuse box, then subsurface 1 at radius 0.01, 0.05 and 0.2 (grey radii,
+# subsurface_scale). A thick subsurface surface reflects its subsurface
+# colour (Karma, Arnold and Cycles invert the colour to the scattering
+# albedo); the boxes of larger radius lose less light, through their sides.
+
+def Camera "cam"
+{
+    float focalLength = 80
+    double3 xformOp:translate = (0, 30, 0)
+    float xformOp:rotateX = -90
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DomeLight "dome"
+{
+    color3f inputs:color = (1, 1, 1)
+    float inputs:intensity = 1
+}
+
+def Scope "mtl"
+{
+    def Material "diffuse"
+    {
+        token outputs:mtlx:surface.connect = </mtl/diffuse/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.6, 0.35)
+            float inputs:specular = 0
+            token outputs:out
+        }
+    }
+    def Material "sss01"
+    {
+        token outputs:mtlx:surface.connect = </mtl/sss01/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.6, 0.35)
+            float inputs:subsurface = 1
+            color3f inputs:subsurface_color = (0.9, 0.6, 0.35)
+            color3f inputs:subsurface_radius = (1, 1, 1)
+            float inputs:subsurface_scale = 0.01
+            float inputs:specular = 0
+            token outputs:out
+        }
+    }
+    def Material "sss05"
+    {
+        token outputs:mtlx:surface.connect = </mtl/sss05/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.6, 0.35)
+            float inputs:subsurface = 1
+            color3f inputs:subsurface_color = (0.9, 0.6, 0.35)
+            color3f inputs:subsurface_radius = (1, 1, 1)
+            float inputs:subsurface_scale = 0.05
+            float inputs:specular = 0
+            token outputs:out
+        }
+    }
+    def Material "sss20"
+    {
+        token outputs:mtlx:surface.connect = </mtl/sss20/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.6, 0.35)
+            float inputs:subsurface = 1
+            color3f inputs:subsurface_color = (0.9, 0.6, 0.35)
+            color3f inputs:subsurface_radius = (1, 1, 1)
+            float inputs:subsurface_scale = 0.2
+            float inputs:specular = 0
+            token outputs:out
+        }
+    }
+}
+
+def Cube "diffuse" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double size = 1
+    rel material:binding = </mtl/diffuse>
+    double3 xformOp:translate = (-2.85, 0, 0)
+    float3 xformOp:scale = (1.6, 1, 1.6)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Cube "sss01" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double size = 1
+    rel material:binding = </mtl/sss01>
+    double3 xformOp:translate = (-0.95, 0, 0)
+    float3 xformOp:scale = (1.6, 1, 1.6)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Cube "sss05" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double size = 1
+    rel material:binding = </mtl/sss05>
+    double3 xformOp:translate = (0.95, 0, 0)
+    float3 xformOp:scale = (1.6, 1, 1.6)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Cube "sss20" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double size = 1
+    rel material:binding = </mtl/sss20>
+    double3 xformOp:translate = (2.85, 0, 0)
+    float3 xformOp:scale = (1.6, 1, 1.6)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
