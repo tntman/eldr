@@ -1,6 +1,7 @@
 #version 450
 
-// Denoised glossy SSR (renderer/ssr.h): the spatial ratio estimator, the
+// Denoised glossy SSR (renderer/ssr.h), after ssr_trace.frag traced the rays
+// mesh.frag's pixels asked for: the spatial ratio estimator, the
 // temporal pass reprojecting through the reflected point, and the
 // variance-guided bilateral filter adding the result to the colour: built
 // once per pass (PASS 0, 1, 2), so each uses only the images it reads.

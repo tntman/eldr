@@ -31,7 +31,8 @@ struct DenoiseParams {  // mirror of the push block in ssr_denoise.frag
     float params[4];  // kDimSsrDenoise's value (< 0: none), history valid, 1/width, 1/height
     float splits[4];  // x: 1 adds the result to the light splits (binding 9), y: the indirect intensity
     // x: pixels per block's side (1, 2), y: 1 = the blocks' rays as traced (no denoiser),
-    // z: interleaved, 1 + the pixel of each block traced this frame
+    // z: interleaved, 1 + the pixel of each block traced this frame,
+    // w (the trace): over the pixels, 1 the smooth surfaces only (interleaved), 2 all
     float blocks[4];
 };
 
@@ -111,10 +112,10 @@ void SsrDenoise::Resize(uint32_t width, uint32_t height, VkImageView depth)
     _depth = depth;
 }
 
-void SsrDenoise::Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout, bool trace)
+void SsrDenoise::Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout)
 {
     divisor = std::clamp(divisor, 1u, 2u);
-    if (trace && !_trace) {
+    if (!_trace) {
         const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DenoiseParams)};  // DrawFullscreen's
         VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         lci.setLayoutCount = 1;
@@ -142,7 +143,7 @@ void SsrDenoise::Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout, bo
     }
     for (Image *img : {&_traced, &_resolved, &_history[0], &_history[1]}) {
         if (img == &_traced && divisor == 1) {
-            continue;  // mesh.frag traces: _rays
+            continue;  // the rays go into _rays
         }
         *img = _dev.CreateImage(kFormat, width, height, 1, 1, target, VK_IMAGE_ASPECT_COLOR_BIT,
                                 VK_IMAGE_VIEW_TYPE_2D);
@@ -233,7 +234,7 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView
     write.pImageInfo = &splitsInfo;
     // What the shading pass stored, read by the passes (and the trace);
     // below full resolution the directions are the trace's.
-    // Interleaved the trace writes the rays too.
+    // At full resolution the trace writes the rays into them.
     const bool blocks = _divisor > 1;
     interleave = blocks ? 0 : interleave;
     auto stored = [&](const Image &img, bool traced = false) {
@@ -243,11 +244,11 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView
                          (traced ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : 0),
                      VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     };
-    stored(_rays, interleave > 0);
+    stored(_rays, !blocks);
     stored(_normals);
     stored(_factor);
     if (!blocks) {
-        stored(_directions, interleave > 0);
+        stored(_directions, true);
     }
     _current ^= 1u;
     write.dstSet = _sets[_current];
@@ -282,11 +283,24 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView
                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     };
-    if (interleave > 0) {
-        // Over the blocks; its colour output is unused (the spatial pass's target stands in).
+    if (!blocks) {
+        // Every pixel's ray; interleaved, the smooth surfaces' and then,
+        // over the blocks, the rough ones'. The trace's colour output is
+        // unused here (the spatial pass's target stands in).
         toTarget(_resolved);
-        DrawFullscreen(cmd, _trace, _traceLayout, scene, _resolved.view, (_width + 1) / 2, (_height + 1) / 2, false,
+        params.blocks[2] = 0.0f;
+        params.blocks[3] = interleave > 0 ? 1.0f : 2.0f;
+        DrawFullscreen(cmd, _trace, _traceLayout, scene, _resolved.view, _width, _height, false,
                        VK_SHADER_STAGE_FRAGMENT_BIT, &params, sizeof(params));
+        params.blocks[2] = float(interleave);
+        params.blocks[3] = 0.0f;
+        if (interleave > 0) {
+            stored(_rays, true);
+            stored(_directions, true);
+            DrawFullscreen(cmd, _trace, _traceLayout, scene, _resolved.view, (_width + 1) / 2, (_height + 1) / 2, true,
+                           VK_SHADER_STAGE_FRAGMENT_BIT, &params, sizeof(params));
+        }
+        toRead(_resolved);
         stored(_rays);
         stored(_directions);
     }

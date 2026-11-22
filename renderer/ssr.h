@@ -6,10 +6,13 @@ namespace vkr {
 
 // Denoised glossy screen-space reflections (Frame::ssrDenoise; Stachowiak
 // 2015, "Stochastic Screen-Space Reflections", as in EEVEE). mesh.frag's
-// opaque pixels trace one GGX-sampled ray each and store its radiance
-// with its pdf, its direction and hit distance, the normal and the
-// reflection's weight (Rays() .. Factor(), scene set bindings 67..70)
-// instead of adding the reflection. Then, before the translucency:
+// opaque pixels store what they reflect without a hit, their ray's GGX
+// alpha, normals and the reflection's weight (Rays() .. Factor(), scene
+// set bindings 72..75) instead of adding the reflection. After the shading
+// pass ssr_trace.frag traces one GGX-sampled ray per pixel (in mesh.frag a
+// ray costs several times more: a quad's helper pixels march too, and the
+// shader is large) into the same images: its radiance with its pdf, its
+// direction and hit distance. Then, before the translucency:
 //   1. spatial: each pixel reuses its neighbours' rays, weighted by its
 //      own BRDF over their pdf (the ratio estimator);
 //   2. temporal: the history reprojected through the reflected point
@@ -30,8 +33,8 @@ namespace vkr {
 // stretches the spatial kernel along the reflection.
 // Interleaved (Resolve's `interleave`, Frame::ssrInterleave) everything
 // stays at full resolution, but of the surfaces rough enough for pass 1's
-// kernel to span a block (mesh.frag's kSsrInterleaved) ssr_trace.frag
-// traces one pixel of each 2 x 2 block, another each frame, and pass 1
+// kernel to span a block (ssr_trace.frag's kInterleavedAlpha) only one
+// pixel of each 2 x 2 block is traced, another each frame, and pass 1
 // gives the pixels without a ray their nearest traced neighbours'.
 class SsrDenoise {
 public:
@@ -47,10 +50,9 @@ public:
     void Resize(uint32_t width, uint32_t height, VkImageView depth);
     // Before the frame's descriptors are written, with the GPU idle: makes
     // the targets on first use and when `divisor` (1: every pixel traces in
-    // mesh.frag, 2: every 2 x 2 block here) changes, which starts the
+    // ssr_trace.frag, 2: every 2 x 2 block) changes, which starts the
     // history over. `sceneLayout`: the scene set's (the trace reads it).
-    // `trace`: ssr_trace.frag will run (divisor 2, or interleaved).
-    void Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout, bool trace);
+    void Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout);
     uint32_t Divisor() const { return _divisor; }
 
     // What mesh.frag writes (GENERAL layout; 1 x 1 placeholders until
@@ -86,12 +88,13 @@ private:
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE, _traceLayout = VK_NULL_HANDLE;  // the trace's: the scene set
     VkPipeline _spatial = VK_NULL_HANDLE, _temporal = VK_NULL_HANDLE, _composite = VK_NULL_HANDLE;
-    VkPipeline _trace = VK_NULL_HANDLE;  // made when first traced below full resolution
+    VkPipeline _trace = VK_NULL_HANDLE;  // made by the first Prepare
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _sets[2] = {};  // history[i] this frame's
-    // GENERAL: mesh.frag's storage images. Below full resolution _rays
-    // holds each pixel's reflection without a hit, and _directions (per
-    // block) is the trace's, as _traced: the rays' radiance and pdf.
+    // GENERAL: mesh.frag's and the trace's storage images. Below full
+    // resolution _rays keeps each pixel's reflection without a hit, and
+    // _directions (per block) is the trace's, as _traced: the rays'
+    // radiance and pdf.
     Image _rays, _directions, _normals, _factor;
     Image _traced, _resolved, _history[2];  // per block below full resolution
     uint32_t _current = 0;

@@ -1,16 +1,18 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
-// Screen-space reflections at a lower resolution (renderer/ssr.h,
-// Frame::movingSsrResolution): one ray per 2 x 2 block of pixels, from the
-// block's first pixel, as mesh.frag traces it at full resolution. Drawn
-// over the blocks after the shading pass, which stored per pixel what this
-// needs (frame.ssr.z 2: a GGX-sampled ray for the denoiser, 3: the mirror
-// ray). Writes the ray's radiance and pdf, and its direction, hit distance
-// and GGX alpha per block.
-// Interleaved (frame.ssr.z 4, Frame::ssrInterleave): the block's pixel
-// changes every frame (pc.blocks.z) and its ray goes into the pixel's own
-// texels of the full-resolution images, unless mesh.frag traced it.
+// SsrDenoise's rays (renderer/ssr.h), traced after the shading pass, which
+// stored per opaque pixel what this needs: here a ray costs a fraction of
+// one in mesh.frag (no helper pixels, a small shader). frame.ssr.z 3: the
+// mirror ray, else a GGX-sampled ray for the denoiser.
+// Over the pixels (pc.blocks.w 2): every pixel's ray, into its texels.
+// Interleaved (Frame::ssrInterleave): first over the pixels the smooth
+// surfaces' rays (pc.blocks.w 1), then over 2 x 2 blocks of pixels the
+// rough ones' (pc.blocks.z), from one pixel of each block, another each
+// frame: the denoiser's spatial pass, wider than a block there, gives the
+// other pixels their neighbours' rays.
+// Per block (Frame::movingSsrResolution): the ray of each block's first
+// pixel, into the block's texel (radiance and pdf: the colour output).
 
 #include "frame.glsl"
 
@@ -33,8 +35,12 @@ layout(push_constant) uniform DenoiseParams {  // ssr_denoise.frag's
     vec4 eye;
     vec4 params;
     vec4 splits;
-    vec4 blocks;  // z: interleaved, 1 + the block's pixel (x + 2 y)
+    vec4 blocks;  // z: interleaved, 1 + the block's pixel (x + 2 y); w: over the pixels, 1 smooth surfaces only
 } pc;
+
+// Interleaved: from this GGX alpha (perceptual roughness 0.2) a surface's
+// rays trace per block (the spatial kernel is then at least 2.5 pixels wide).
+const float kInterleavedAlpha = 0.04;
 
 float SignNotZero(float x)
 {
@@ -58,9 +64,10 @@ vec3 OctDecode(vec2 e)
 
 void main()
 {
-    bool interleaved = pc.blocks.z > 0.0;
-    int which = int(pc.blocks.z) - 1;
-    ivec2 q = ivec2(gl_FragCoord.xy), px = 2 * q + (interleaved ? ivec2(which & 1, which >> 1) : ivec2(0));
+    // The rays go into their pixels' own texels, or their blocks'.
+    bool everyPixel = pc.blocks.w > 0.0, pixels = everyPixel || pc.blocks.z > 0.0;
+    int which = max(int(pc.blocks.z) - 1, 0);
+    ivec2 q = ivec2(gl_FragCoord.xy), px = everyPixel ? q : 2 * q + ivec2(which & 1, which >> 1);
     outRay = vec4(0.0);
     if (any(greaterThanEqual(px, imageSize(ssrFactor))) || imageLoad(ssrFactor, px).a <= 0.0) {
         return;  // nothing reflects here: the passes after skip the block
@@ -69,13 +76,16 @@ void main()
     vec3 p = Unproject(vec3(ndc, texelFetch(sceneDepth, px, 0).r * 2.0 - 1.0));
     vec3 v = ViewDirection(p);
     vec4 surface = imageLoad(ssrSurface, px), normals = imageLoad(ssrNormals, px);
-    if (interleaved && surface.a > 0.0) {
-        return;  // a smooth surface: mesh.frag traced it
+    if (pixels && surface.a > 0.0) {
+        return;  // it has its ray (a smooth surface's)
     }
     vec3 n = OctDecode(normals.xy);
-    float a = interleaved ? imageLoad(ssrDirections, px).w : surface.a, pdf = 1.0, cone = 2.0 * a;
+    float a = pixels ? imageLoad(ssrDirections, px).w : surface.a, pdf = 1.0, cone = 2.0 * a;
+    if (pc.blocks.w == 1.0 && a >= kInterleavedAlpha) {
+        return;  // a rough surface: the blocks' turn
+    }
     // Interleaved, each pixel has its own sequence of samples (every fourth frame's).
-    vec2 noisePixel = interleaved ? vec2(px) : gl_FragCoord.xy;
+    vec2 noisePixel = pixels ? vec2(px) : gl_FragCoord.xy;
     vec3 l = reflect(-v, n);
     if (frame.ssr.z < 3.0) {
         // As mesh.frag's denoised ray.
@@ -104,7 +114,7 @@ void main()
     float w = TraceReflection(p, l, cone, hit);
     vec4 ray = vec4(mix(surface.rgb, hit.rgb + (1.0 - hit.a) * surface.rgb, w), pdf);
     vec4 direction = vec4(OctEncode(l), w > 0.0 ? ssrHitDistance : -1.0, a);
-    if (interleaved) {
+    if (pixels) {
         imageStore(ssrSurface, px, vec4(ray.rgb, max(pdf, 1e-4)));  // a pdf above 0: it has a ray
         imageStore(ssrDirections, px, direction);
     } else {

@@ -74,6 +74,13 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
 {
     int steps = int(frame.features.y);
     hit = vec4(0.0);
+    // A quad's helper pixels (beside a triangle's edge, shaded only for
+    // derivatives) show nothing and nothing after takes a derivative of
+    // the hit: no march. Small triangles have more helpers than pixels
+    // (the Kitchen: two thirds of the shading pass).
+    if (gl_HelperInvocation) {
+        return 0.0;
+    }
     vec4 c0 = frame.viewProj * vec4(p, 1.0);
     vec4 dc = frame.viewProj * vec4(r, 0.0);
     // End far along the ray but in front of the near plane (z >= -w).

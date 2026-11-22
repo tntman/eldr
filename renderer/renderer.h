@@ -624,7 +624,7 @@ public:
         // build (about half the memory). Skinned and displaced ones refit.
         bool rtCompaction = true;
         // Denoised glossy SSR (ssr.h, with ssr; not with rtReflections):
-        // one GGX-sampled ray per pixel, faded out from roughness 0.5 to 0.8,
+        // one GGX-sampled ray per pixel (traced after the shading pass), faded out from roughness 0.5 to 0.8,
         // through a ratio estimator, temporal reprojection through the
         // reflected point and a variance-guided bilateral filter. Off: one
         // mirror ray, faded out from roughness 0.3 to 0.6.
@@ -637,11 +637,12 @@ public:
         uint32_t movingSsrResolution = 2;
         // Denoised SSR's rays interleaved (eldr:ssrInterleave): of surfaces
         // from perceptual roughness 0.2 up, each frame (film sample) traces
-        // one pixel of every 2 x 2 block, another each time, after the
-        // shading pass; the denoiser's spatial pass gives the others their
-        // nearest traced neighbours' rays (ssr.h). Smoother surfaces trace
-        // every pixel. Off: every pixel, every frame.
-        bool ssrInterleave = true;
+        // one pixel of every 2 x 2 block, another each time; the denoiser's
+        // spatial pass gives the others their nearest traced neighbours'
+        // rays (ssr.h). Smoother surfaces trace every pixel. Off: every
+        // pixel, every frame. Slightly crisper rough reflections than off
+        // (fewer rays per estimate), so off by default.
+        bool ssrInterleave = false;
         // Jittered light shapes under the film (EEVEE's jittered soft
         // shadows): each sample renders the shadow maps from a point of the
         // light (the sun's disc, a rect's or disk's area, inside a

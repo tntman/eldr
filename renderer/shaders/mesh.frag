@@ -848,23 +848,13 @@ vec3 MultiBounce(float visibility, vec3 albedo)
     return max(vec3(visibility), ((visibility * a + b) * visibility + c) * visibility);
 }
 
-// Denoised SSR (renderer/ssr.h, frame.ssr.z): the opaque surface's one
-// GGX-sampled ray per pixel, for the denoiser. At a lower resolution
-// (frame.ssr.z 2, 3) ssr_trace.frag traces after this pass: ssrRays then
-// holds what the pixel reflects without a hit and its ray's GGX alpha,
-// ssrNormals the geometric normal too, and ssrDirections is the trace's.
-// Interleaved (4) it traces the rougher surfaces' rays, a quarter of them
-// a frame, into these images: their pixels store a pdf of 0 (no ray yet)
-// and the alpha with the directions.
-layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // radiance along it, its pdf
-layout(set = 0, binding = 73, rgba16f) uniform writeonly image2D ssrDirections;  // octahedral, hit distance, GGX alpha
-layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;     // octahedral
+// SsrDenoise's (renderer/ssr.h, frame.ssr.z): what ssr_trace.frag needs of
+// each opaque pixel to trace its ray after this pass (main, below).
+layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // the reflection without a hit; alpha or 0
+layout(set = 0, binding = 73, rgba16f) uniform writeonly image2D ssrDirections;  // no hit yet, GGX alpha
+layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;     // the normal, the geometric normal (octahedral)
 layout(set = 0, binding = 75, rgba16f) uniform writeonly image2D ssrFactor;      // the reflection's weight, 1 + the share that shows
 #include "ssr_trace.glsl"
-// Interleaved denoised SSR (frame.ssr.z 4): from this perceptual roughness
-// up a surface's rays are traced for a quarter of its pixels a frame (the
-// denoiser's spatial kernel is then at least 2.5 pixels wide).
-const float kSsrInterleaved = 0.2;
 
 // Same SH9 basis order as BuildEnvironment.
 vec3 Irradiance(vec3 d)
@@ -1160,17 +1150,17 @@ void main()
     // it shows through the fog and the surface's presence rides in alpha).
     vec3 ssrAdded = vec3(0.0);
     bool ssrAdds = false;
-    if (frame.ssr.z >= 2.0 && ssrWeight > 0.0 && RtOpaque() && (frame.ssr.z < 4.0 || perceptual >= kSsrInterleaved)) {
-        // At a lower resolution (Frame::movingSsrResolution): ssr_trace.frag
-        // traces one pixel of each block after this pass and SsrDenoise
-        // adds FssEss times the weight times the reflection. Denoised
-        // (frame.ssr.z 2) a GGX-sampled ray, glossy up to roughness 0.8;
-        // else (3) the mirror ray along ssrDir, as wide as ssrWidth.
-        // Interleaved (4, Frame::ssrInterleave): the denoised ray of one
-        // pixel of each block, another each frame, for surfaces rough
-        // enough that the denoiser's kernel spans the block; smoother
-        // ones trace here, below.
-        const bool glossy = frame.ssr.z != 3.0, interleaved = frame.ssr.z >= 4.0;
+    if (frame.ssr.z > 0.0 && ssrWeight > 0.0 && RtOpaque()) {
+        // SsrDenoise's: ssr_trace.frag traces after this pass, and its
+        // passes add FssEss times the weight times the reflection.
+        // Denoised (frame.ssr.z 1, 2, 4) a GGX-sampled ray, glossy up to
+        // roughness 0.8; else (3, while moving) the mirror ray along
+        // ssrDir, as wide as ssrWidth. Stored for it: what the pixel
+        // reflects without a hit (the probe's or dome's), the ray's GGX
+        // alpha and the normals. Per block of pixels (2, 3:
+        // Frame::movingSsrResolution) the alpha rides with the reflection;
+        // else a 0 there says the pixel has no ray yet.
+        const bool glossy = frame.ssr.z != 3.0, blocks = frame.ssr.z == 2.0 || frame.ssr.z == 3.0;
         if (glossy) {
             ssrWeight = 1.0 - smoothstep(0.5, 0.8, perceptual);
 #ifdef LAYERS
@@ -1179,52 +1169,11 @@ void main()
         }
         ivec2 px = ivec2(gl_FragCoord.xy);
         vec3 m = v + ssrDir;  // the mirror ray's normal
-        imageStore(ssrRays, px, vec4(specular, interleaved ? 0.0 : glossy ? a : 0.5 * ssrWidth));
-        if (interleaved) {
+        imageStore(ssrRays, px, vec4(specular, !blocks ? 0.0 : glossy ? a : 0.5 * ssrWidth));
+        if (!blocks) {
             imageStore(ssrDirections, px, vec4(0.0, 0.0, -1.0, a));
         }
         imageStore(ssrNormals, px, vec4(OctEncode(glossy || dot(m, m) < 1e-8 ? n : normalize(m)), OctEncode(ng)));
-        ssrAdded = FssEss * ssrWeight;
-        ssrAdds = true;
-        specular *= 1.0 - ssrWeight;
-        domeKept *= 1.0 - ssrWeight;  // ponytail: as the denoised rays below
-    } else if (frame.ssr.z > 0.0 && ssrWeight > 0.0 && RtOpaque()) {
-        // Denoised: one GGX-sampled ray (glossy up to roughness 0.8), its
-        // radiance (the probe's or dome's where it misses) and pdf for the
-        // denoiser, which adds FssEss times the weight times its estimate.
-        ssrWeight = 1.0 - smoothstep(0.5, 0.8, perceptual);
-#ifdef LAYERS
-        ssrWeight *= 1.0 - layers.anisotropy;
-#endif
-        vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
-        vec3 ve = vec3(dot(v, tx), dot(v, ty), NoV);
-        // Two sample dimensions; without them interleaved gradient noise,
-        // two lookups shifted per frame.
-        vec2 u;
-        if (frame.sampleInfo.x != 0u) {
-            u = vec2(SampleNoise(kDimSsrGgx, gl_FragCoord.xy, 0.0), SampleNoise(kDimSsrGgx2, gl_FragCoord.xy, 0.0));
-        } else {
-            vec2 q = gl_FragCoord.xy + 5.588238 * frame.ssr.y;
-            u = fract(52.9829189 * fract(vec2(dot(q, vec2(0.06711056, 0.00583715)),
-                                              dot(q.yx + vec2(19.0, 47.0), vec2(0.06711056, 0.00583715)))));
-        }
-        vec3 h = SampleGgxVndf(ve, a, u);
-        h = tx * h.x + ty * h.y + n * h.z;
-        vec3 l = reflect(-v, h);
-        if (dot(l, ng) <= 0.0) {
-            h = n;  // below the surface: the mirror direction
-            l = reflect(-v, n);
-        }
-        // The visible normals' pdf: D(h) G1(v) / (4 NoV).
-        float pdf = D_GGX(max(dot(n, h), 0.0), a) * 2.0 / (NoV + sqrt(a * a + (1.0 - a * a) * NoV * NoV)) / 4.0;
-        vec4 hit;
-        // The ray's share of the lobe: the solid angle of one of the 9
-        // rays the denoiser's spatial pass reuses.
-        float w = TraceReflection(inWorldPos, l, sqrt(1.0 / (9.0 * PI * max(pdf, 1e-6))), hit);
-        ivec2 px = ivec2(gl_FragCoord.xy);
-        imageStore(ssrRays, px, vec4(mix(specular, hit.rgb + (1.0 - hit.a) * specular, w), pdf));
-        imageStore(ssrDirections, px, vec4(OctEncode(l), w > 0.0 ? ssrHitDistance : -1.0, a));
-        imageStore(ssrNormals, px, vec4(OctEncode(n), 0.0, 0.0));
         ssrAdded = FssEss * ssrWeight;
         ssrAdds = true;
         specular *= 1.0 - ssrWeight;

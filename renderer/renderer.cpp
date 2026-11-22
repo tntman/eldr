@@ -3694,8 +3694,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
         fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
-        // Denoised: the shading pass writes its rays (traced reflections
-        // replace SSR where they apply: no denoiser then).
+        // Denoised: the shading pass stores what its rays need and
+        // SsrDenoise traces them after it (traced reflections replace SSR
+        // where they apply: no denoiser then).
         // eldr:movingSsrResolution: while moving (and the ramp after, never
         // in the film) one ray per 2 x 2 block, traced after the shading
         // pass (SsrDenoise; 2 denoised, 3 the mirror rays).
@@ -3705,7 +3706,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         if ((frame.ssrDenoise || blocks) && !(tracedReflections && _rt && frame.depthPrepass)) {
             ssrInterleaved = frame.ssrInterleave && !blocks;
             fd.ssr[2] = ssrInterleaved ? 4.0f : !blocks ? 1.0f : frame.ssrDenoise ? 2.0f : 3.0f;
-            _ssr.Prepare(blocks ? 2 : 1, _setLayout, blocks || ssrInterleaved);
+            _ssr.Prepare(blocks ? 2 : 1, _setLayout);
         }
     }
 
