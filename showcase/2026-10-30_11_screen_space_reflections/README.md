@@ -8,9 +8,13 @@ Columns, an arch and a chrome ball on a polished floor, with a rougher strip ove
 
 - **ssr**: the columns and ball are mirrored in the floor, blurrier on the rough strip.
 - **ssrOff**: the floor reflects only the dome.
+- **ssrGlossy**: Denoised Glossy SSR: the rough strip reflects blurred instead of faded.
+- **ssrInterleave**: ssrGlossy with Interleaved Glossy SSR Rays: the strip traces one pixel in four per film sample, for a faster render with slightly crisper blur.
 - **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 eldr_final traces reflections instead, so it also shows what is off screen.
+
+Tumble the view: while the camera moves, reflections trace one ray per 2 x 2 pixels (SSR Resolution Divisor while Moving; 1 traces every pixel) and sharpen when you stop.
 
 ## Open
 

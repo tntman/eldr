@@ -14,6 +14,12 @@
 # /Render/ssr (the default): the columns and the ball mirrored in the
 # floor, fading with roughness (0.3-0.6) in the strip.
 # /Render/ssrOff: eldr:ssr off: only the dome in the floor.
+# /Render/ssrGlossy: eldr:ssrDenoise: the strip reflects blurred instead
+# of faded.
+# /Render/ssrInterleave: ssrGlossy with eldr:ssrInterleave: the strip's
+# rays for one pixel in four per film sample.
+# While the camera moves, reflections trace one ray per 2 x 2 pixels
+# (eldr:movingSsrResolution; 1: every pixel).
 
 def Camera "cam"
 {
@@ -153,6 +159,21 @@ def Scope "Render"
     {
         rel camera = </cam>
         custom bool eldr:ssr = 0
+        uniform int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "ssrGlossy"
+    {
+        rel camera = </cam>
+        custom bool eldr:ssrDenoise = 1
+        uniform int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "ssrInterleave"
+    {
+        rel camera = </cam>
+        custom bool eldr:ssrDenoise = 1
+        custom bool eldr:ssrInterleave = 1
         uniform int2 resolution = (960, 540)
     }
 }
