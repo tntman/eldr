@@ -2,30 +2,40 @@
  "sponza_atrium": {
   "eldr_default": {
    "ok": true,
-   "wall": 93.93893122673035,
-   "sec": 35.242396,
-   "mem": 7720,
-   "ratio": 1.6381306505306004
+   "wall": 88.46402859687805,
+   "sec": 14.699758000000005,
+   "load": 33.3,
+   "cold": 41.2,
+   "mem": 7646,
+   "limited": false,
+   "ratio": 1.638113378461719
   },
   "eldr_final": {
    "ok": true,
-   "wall": 128.2726652622223,
-   "sec": 66.668671,
-   "mem": 9116,
-   "ratio": 1.2990181016478168
+   "wall": 121.69367623329163,
+   "sec": 44.762654,
+   "load": 33.5,
+   "cold": 38.2,
+   "mem": 8831,
+   "limited": false,
+   "ratio": 0.9056662986243467
   },
   "karma_xpu": {
    "ok": true,
-   "wall": 232.61687064170837,
-   "sec": 196.60999999999999,
+   "wall": 195.11043858528137,
+   "sec": 163.25999999999996,
+   "load": 8.59,
+   "cold": null,
    "mem": null,
    "limited": false,
-   "ratio": 1.0686895180149765
+   "ratio": 1.0685993391126873
   },
   "karma_cpu": {
    "ok": true,
-   "wall": 278.903648853302,
-   "sec": 250.88000000000002,
+   "wall": 271.03106594085693,
+   "sec": 243.82,
+   "load": 3.2499999999999987,
+   "cold": null,
    "mem": null,
    "limited": false,
    "ratio": null
@@ -34,30 +44,40 @@
  "sponza_arcade": {
   "eldr_default": {
    "ok": true,
-   "wall": 81.95104432106018,
-   "sec": 24.259545000000003,
-   "mem": 7279,
-   "ratio": 1.978525761978467
+   "wall": 80.46646237373352,
+   "sec": 7.31648,
+   "load": 32.8,
+   "cold": 33.0,
+   "mem": 7301,
+   "limited": false,
+   "ratio": 1.9783978915818017
   },
   "eldr_final": {
    "ok": true,
-   "wall": 103.02344155311584,
-   "sec": 43.607252,
-   "mem": 8102,
-   "ratio": 1.6766620337234126
+   "wall": 108.16192984580994,
+   "sec": 30.940481999999996,
+   "load": 33.1,
+   "cold": 32.9,
+   "mem": 8309,
+   "limited": false,
+   "ratio": 0.9518578595849374
   },
   "karma_xpu": {
    "ok": true,
-   "wall": 87.73225164413452,
-   "sec": 56.66,
+   "wall": 112.34996509552002,
+   "sec": 79.26,
+   "load": 7.78,
+   "cold": null,
    "mem": null,
    "limited": false,
-   "ratio": 1.0586132759537128
+   "ratio": 1.0584962057367429
   },
   "karma_cpu": {
    "ok": true,
-   "wall": 236.83709859848022,
-   "sec": 209.38,
+   "wall": 246.5829017162323,
+   "sec": 219.18,
+   "load": 3.13,
+   "cold": null,
    "mem": null,
    "limited": false,
    "ratio": null
@@ -66,30 +86,40 @@
  "sponza_candles": {
   "eldr_default": {
    "ok": true,
-   "wall": 1276.513445854187,
-   "sec": 1179.7859709999998,
-   "mem": 6671,
-   "ratio": 0.6735212597501384
+   "wall": 159.09893155097961,
+   "sec": 17.15967099999999,
+   "load": 33.4,
+   "cold": 60.1,
+   "mem": 6631,
+   "limited": false,
+   "ratio": 0.42905529678885374
   },
   "eldr_final": {
    "ok": true,
-   "wall": 1192.1498608589172,
-   "sec": 1106.196619,
-   "mem": 8378,
-   "ratio": 0.6650688965597138
+   "wall": 194.84766149520874,
+   "sec": 49.987030000000004,
+   "load": 34.1,
+   "cold": 38.6,
+   "mem": 8605,
+   "limited": false,
+   "ratio": 0.470467193175524
   },
   "karma_xpu": {
    "ok": true,
-   "wall": 606.2769873142242,
-   "sec": 543.2700000000001,
+   "wall": 607.2942800521851,
+   "sec": 542.7700000000001,
+   "load": 24.0,
+   "cold": null,
    "mem": null,
    "limited": true,
-   "ratio": 1.1298944193386742
+   "ratio": 1.1295175393415755
   },
   "karma_cpu": {
    "ok": true,
-   "wall": 602.0630986690521,
-   "sec": 544.8700000000001,
+   "wall": 601.9709992408752,
+   "sec": 542.71,
+   "load": 13.609999999999994,
+   "cold": null,
    "mem": null,
    "limited": true,
    "ratio": null
@@ -98,32 +128,40 @@
  "sponza_knight": {
   "eldr_default": {
    "ok": true,
-   "wall": 103.08015823364258,
-   "sec": 23.531703,
-   "mem": 5361,
+   "wall": 64.01247215270996,
+   "sec": 6.298433,
+   "load": 28.4,
+   "cold": 34.8,
+   "mem": 7019,
    "limited": false,
-   "ratio": 1.5308089831903582
+   "ratio": 1.5279815544126065
   },
   "eldr_final": {
    "ok": true,
-   "wall": 99.96896171569824,
-   "sec": 33.650214,
-   "mem": 7722,
+   "wall": 90.54023313522339,
+   "sec": 30.142015999999998,
+   "load": 28.4,
+   "cold": 33.3,
+   "mem": 7692,
    "limited": false,
-   "ratio": 1.1353148801135062
+   "ratio": 0.9304249465382023
   },
   "karma_xpu": {
    "ok": true,
-   "wall": 126.88208603858948,
-   "sec": 96.93,
+   "wall": 136.26977515220642,
+   "sec": 104.94,
+   "load": 7.09,
+   "cold": null,
    "mem": null,
    "limited": false,
-   "ratio": 1.0631138566295193
+   "ratio": 1.0631084920498775
   },
   "karma_cpu": {
    "ok": true,
-   "wall": 221.41112542152405,
-   "sec": 193.60999999999999,
+   "wall": 236.64357662200928,
+   "sec": 209.26999999999998,
+   "load": 2.7499999999999987,
+   "cold": null,
    "mem": null,
    "limited": false,
    "ratio": null
@@ -132,30 +170,40 @@
  "sponza_flood": {
   "eldr_default": {
    "ok": true,
-   "wall": 76.57644891738892,
-   "sec": 26.196295999999997,
-   "mem": 6064,
-   "ratio": 1.6098128932990823
+   "wall": 71.91637134552002,
+   "sec": 24.189799999999998,
+   "load": 26.5,
+   "cold": 26.4,
+   "mem": 6080,
+   "limited": false,
+   "ratio": 1.6095764796308323
   },
   "eldr_final": {
    "ok": true,
-   "wall": 106.73280715942383,
-   "sec": 61.782744,
-   "mem": 6780,
-   "ratio": 1.2070975784696283
+   "wall": 109.97632193565369,
+   "sec": 59.334051,
+   "load": 26.4,
+   "cold": 26.7,
+   "mem": 6754,
+   "limited": false,
+   "ratio": 1.054965373869198
   },
   "karma_xpu": {
    "ok": true,
-   "wall": 92.38719987869263,
-   "sec": 73.85000000000001,
+   "wall": 102.76228737831116,
+   "sec": 83.78999999999999,
+   "load": 6.57,
+   "cold": null,
    "mem": null,
    "limited": false,
-   "ratio": 1.0508875344928168
+   "ratio": 1.0505443383402884
   },
   "karma_cpu": {
    "ok": true,
-   "wall": 274.18878984451294,
-   "sec": 258.63000000000005,
+   "wall": 292.9340510368347,
+   "sec": 277.2,
+   "load": 3.0500000000000007,
+   "cold": null,
    "mem": null,
    "limited": false,
    "ratio": null
@@ -164,30 +212,40 @@
  "sponza_explosion": {
   "eldr_default": {
    "ok": true,
-   "wall": 59.39643359184265,
-   "sec": 18.795893,
-   "mem": 6245,
-   "ratio": 1.0885546951649958
+   "wall": 52.17803192138672,
+   "sec": 11.986821,
+   "load": 25.8,
+   "cold": 26.6,
+   "mem": 6279,
+   "limited": false,
+   "ratio": 1.0885407490328327
   },
   "eldr_final": {
    "ok": true,
-   "wall": 81.94347834587097,
-   "sec": 39.244796,
-   "mem": 6766,
-   "ratio": 0.8790500313154834
+   "wall": 82.93706560134888,
+   "sec": 39.755379999999995,
+   "load": 26.1,
+   "cold": 26.1,
+   "mem": 6893,
+   "limited": false,
+   "ratio": 0.7834608792718619
   },
   "karma_xpu": {
    "ok": true,
-   "wall": 95.18292784690857,
-   "sec": 76.94,
+   "wall": 100.70091938972473,
+   "sec": 80.38999999999999,
+   "load": 7.6899999999999995,
+   "cold": null,
    "mem": null,
    "limited": false,
-   "ratio": 0.36806892400168817
+   "ratio": 0.3680881364463089
   },
   "karma_cpu": {
    "ok": true,
-   "wall": 265.6483211517334,
-   "sec": 247.55999999999997,
+   "wall": 279.559396982193,
+   "sec": 263.74,
+   "load": 3.0700000000000007,
+   "cold": null,
    "mem": null,
    "limited": false,
    "ratio": null
@@ -196,17 +254,21 @@
  "crowd": {
   "eldr_default": {
    "ok": true,
-   "wall": 39.00190734863281,
-   "sec": 17.556946,
-   "mem": 1380,
+   "wall": 24.630526542663574,
+   "sec": 13.039631,
+   "load": 0.2,
+   "cold": 2.8,
+   "mem": 1314,
    "limited": false,
    "ratio": null
   },
   "eldr_final": {
    "ok": true,
-   "wall": 30.197505235671997,
-   "sec": 18.962008,
-   "mem": 1692,
+   "wall": 24.6092586517334,
+   "sec": 13.086469999999998,
+   "load": 0.2,
+   "cold": 3.8,
+   "mem": 1714,
    "limited": false,
    "ratio": null
   }
