@@ -48,6 +48,7 @@ PASSES = [
     ("aovs", "Extra AOVs"),
     ("lensDistortion", "Lens distortion"),
     ("readback", "Readback to Hydra"),
+    ("shutterRestore", "Shutter restore (motion blur samples)"),
 ]
 
 

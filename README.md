@@ -849,7 +849,7 @@ A final render is a Render Settings prim with the expensive settings ticked one 
 
 | Variable | Description |
 |---|---|
-| `HDVK_TIMING` | `1` prints startup and per-pass GPU times (per tile for tiled renders); `2` writes a CSV row per frame to `HDVK_TIMING_CSV` |
+| `HDVK_TIMING` | `1` prints startup and per-pass GPU times (per tile for tiled renders); `2` writes a CSV row per frame to `HDVK_TIMING_CSV`; `3` also prints the film's average sample per pass when the render ends |
 | `HDVK_PIPELINE_CACHE_DIR` | Moves the shader pipeline cache and the compressed-texture cache (default `%LOCALAPPDATA%\Eldr`) |
 | `HDVK_NO_RAY_TRACING` | `1` behaves as if the GPU had no ray tracing |
 | `HDVK_RT_EARLY_COMPILE` | `0` compiles ray tracing pipelines on first trace instead of on background threads |

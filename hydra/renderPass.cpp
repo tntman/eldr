@@ -1353,17 +1353,29 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             sample.readback = false;
             const auto until = tRender + std::chrono::duration_cast<FrameTiming::Clock::duration>(
                                              std::chrono::duration<double>(batchSeconds));
+            double renderMs = 0.0, commitMs = 0.0;  // HDVK_TIMING=3: the batch's samples and the commits between them
+            uint32_t samples = 0;
             for (;;) {
+                const auto t0 = FrameTiming::Clock::now();
                 _renderer->Render(_scene, frame, sample);
                 vkDelegate->NoteFrame();
-                if ((_renderer->IsConverged() && !_scene.LodsPending()) || FrameTiming::Clock::now() >= until) {
+                const auto t1 = FrameTiming::Clock::now();
+                renderMs += FrameTiming::Ms(t0, t1);
+                ++samples;
+                if ((_renderer->IsConverged() && !_scene.LodsPending()) || t1 >= until) {
                     break;
                 }
                 // As the app's commit between executes: last sample's motion settles.
                 vkDelegate->CommitResources(nullptr);
                 frame.stillCamera = HdVkCamera::IsViewportCamera(cameraId);  // the next execute's
+                commitMs += FrameTiming::Ms(t1, FrameTiming::Clock::now());
             }
+            const auto tRead = FrameTiming::Clock::now();
             _renderer->Read(out);
+            if (vkr::TimingLevel() >= 3) {
+                std::fprintf(stderr, "HdVk batch: %u samples, render %.1f ms, commits between %.1f ms, read %.1f ms\n",
+                             samples, renderMs, commitMs, FrameTiming::Ms(tRead, FrameTiming::Clock::now()));
+            }
         } else {
             _renderer->Render(_scene, frame, out);
             vkDelegate->NoteFrame();

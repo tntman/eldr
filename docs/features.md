@@ -62,12 +62,12 @@ GPU passes in order. Names are the timers in usdview's **Eldr > Render Statistic
 
 | # | Pass | What it does |
 |---|---|---|
-| 0 | `probeCapture`, `planarReflection` (opt) | Draw the probe cube and mirrored views |
-| 1 | `skinning` | Last frame's joints (sampled motion: the shutter's) kept for motion, then GPU joint matrices from skeletons |
-| 2 | `shutter` (opt) | Moves instances, joints, blend shapes, camera to the sample's shutter time |
+| 0 | `probeCapture`, `planarReflection` (opt) | Draw the probe cube and mirrored views. A film renders the mirrors in its first samples and keeps them, unless lens or shutter samples move the camera |
+| 1 | `skinning` | Last frame's joints (sampled motion: the shutter's) kept for motion, then GPU joint matrices from skeletons. Only when the scene changed: a film's samples and camera moves keep the joints |
+| 2 | `shutter` (opt) | Moves instances, joints, blend shapes, camera to the sample's shutter time; `shutterRestore` puts the frame's own back after the sample |
 | 3 | `cullCamera`, `cullShadows` | Frustum and size culling, LOD choice, indirect draws: the camera's, then the 4 sun cascades' |
 | 4 | `lightClusters` | Local lights into 16x9x24 view clusters |
-| 5 | `sunCascade0`..`3`, `sunShadows`, `sunShadowMin` | The 4 cascades' depth, one each; translucent and volume tint maps; min-depth reduction for the soft search |
+| 5 | `sunCascade0`..`3`, `sunShadows`, `sunShadowMin` | The 4 cascades' depth, one each; translucent and volume tint maps; min-depth reduction for the soft search. A film whose sun isn't jittered (**Jittered Light Shape per Sample** off, or a sun without an angle) draws them in its first samples and keeps them |
 | 6 | `depthPrepass` | Depth plus cutout alpha tests |
 | 7 | `accelerationStructures`, `rayTracing` (opt) | BLAS/TLAS; traced shadows, reflections, GI probe updates |
 | 8 | `ssgi` or `ambientOcclusion` | SSGI (replaces AO) or GTAO |
