@@ -18,7 +18,7 @@ Eldr is a GPU renderer for USD. It plugs into Houdini's Solaris, usdview, usdrec
 
 ## Install in Houdini
 
-Eldr ships as a Houdini package, `eldr.json`, next to the plugin in the Houdini build folder (`build-h22/houdini`). Building it is described on the [Houdini page](../houdini.md#build).
+Eldr ships as a Houdini package, `eldr.json`. For Houdini 22.0.466 on Windows, download the zip from the [Releases](https://github.com/tntman/eldr/releases/latest) page and unzip it so the folder is `C:\eldr` (for another folder, change `ELDR_ROOT` in `eldr.json`). A source build writes the package to `build-h22/houdini`; building is described on the [Houdini page](../houdini.md#build).
 
 1. Copy `eldr.json` to `Documents/houdini22.0/packages/`, or set `HOUDINI_PACKAGE_DIR` to the folder that holds it.
    You should see: nothing yet; Houdini reads packages when it starts.

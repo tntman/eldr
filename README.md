@@ -796,12 +796,21 @@ flowchart LR
 Eldr needs Windows, a GPU with Vulkan 1.3 and a current driver, and either Houdini 22 (22.0.466) or OpenUSD 26.08. A GPU with Vulkan ray tracing is optional: without it Eldr skips the effects marked **[RT]** in the [settings](docs/settings.md).
 
 > [!NOTE]
-> There is no binary release yet. Eldr builds from source against your Houdini or USD install; see [docs/houdini.md](docs/houdini.md#build).
+> A prebuilt package for Houdini 22.0.466 on Windows is on the [Releases](https://github.com/tntman/eldr/releases/latest) page. Other Houdini or USD versions build from source; see [docs/houdini.md](docs/houdini.md#build).
+
+**From the release**
+
+1. Unzip `eldr-v0.1.0-houdini22.0.466-win64.zip` so the folder is `C:\eldr`. For another folder, change `ELDR_ROOT` in `eldr.json`.
+2. Copy `eldr.json` to `Documents/houdini22.0/packages/`.
+3. Start Houdini, go to a LOP network and pick **Eldr** in the viewport's renderer menu or on a Render Settings LOP.
+
+**From source**
 
 1. Build the Houdini plugin (below). The build writes `build-h22/houdini/eldr.json`, a Houdini package.
 2. Copy `eldr.json` to `Documents/houdini22.0/packages/`, or set `HOUDINI_PACKAGE_DIR` to `build-h22/houdini`.
 3. Start Houdini, go to a LOP network and pick **Eldr** in the viewport's renderer menu or on a Render Settings LOP.
-4. Render Settings and light LOPs made before the install get Eldr's tab from **Rebuild Renderer-Specific Parameters**.
+
+Render Settings and light LOPs made before the install get Eldr's tab from **Rebuild Renderer-Specific Parameters**.
 
 <!-- USAGE -->
 ## Usage

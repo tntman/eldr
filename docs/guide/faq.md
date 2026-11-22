@@ -10,7 +10,7 @@ No. Eldr needs Vulkan 1.3. Only the settings marked [RT] need Vulkan ray tracing
 
 ## Which systems does it run on?
 
-Windows, 64-bit, with Houdini 22 (22.0.466) or OpenUSD 26.08. There is no binary release: Eldr builds from source ([Houdini](../houdini.md#build)).
+Windows, 64-bit, with Houdini 22 (22.0.466) or OpenUSD 26.08. A prebuilt package for Houdini 22.0.466 is on the [Releases](https://github.com/tntman/eldr/releases/latest) page; other versions build from source ([Houdini](../houdini.md#build)).
 
 ## Which Houdini licence do I need?
 
