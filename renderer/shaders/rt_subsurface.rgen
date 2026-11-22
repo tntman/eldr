@@ -30,8 +30,9 @@
 //     but not scattered on the way;
 //   - where it leaves, the light of a white diffuse surface there
 //     (ShadeHit: every light shadowed by a ray, the dome or GI probes).
-// rgb: that light times the subsurface weight (and 1 - metallic), what
-// the subsurface pass's light stands for; a: 1 where a walk ran, 0
+// rgb: that light times the subsurface weight (and 1 - metallic) and what
+// the specular layer lets through, what the subsurface pass's light stands
+// for; a: 1 where a walk ran, 0
 // elsewhere (thin walls, other materials: the blur keeps its own there).
 // ponytail: any surface ends a walk (an overlapping mesh too); no
 // boundary Fresnel inside (index matched); one walk per pixel and sample
@@ -85,6 +86,16 @@ void main()
         return;
     }
     float weight = m.subsurface.w * (1.0 - clamp(hit.metallic, 0.0, 1.0));
+    // What the specular layer above takes, as the subsurface pass's light
+    // has it (brdf.glsl SetupBase): 1 - its directional albedo towards the
+    // camera, Karis' analytic fit as ShadeHit's, F0 by the ior, specular
+    // weight and colour.
+    float f = (m.refraction.x - 1.0) / (m.refraction.x + 1.0);
+    vec3 f0 = clamp(f * f * max(m.specular.rgb, 0.0), 0.0, 1.0);
+    vec4 kr = s.roughness * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+    float a004 = min(kr.x * kr.x, exp2(-9.28 * max(dot(s.n, -dir), 0.0))) * kr.x + kr.y;
+    vec3 layered = weight * (1.0 - clamp(max(m.specular.w, 0.0) * (f0 * (-1.04 * a004 + kr.z) + (1.04 * a004 + kr.w)),
+                                         0.0, 1.0));
 
     // Van de Hulst's single-scattering albedo for the multiple-scattering
     // albedo A (a semi-infinite slab's total reflectance).
@@ -136,7 +147,7 @@ void main()
         hit.baseColor = vec3(1.0);
         hit.metallic = 0.0;
         hit.emissive = vec3(0.0);
-        light = throughput * weight * ShadeHit(-hit.normal, seed + uvec3(0u, 0u, 104729u), false, true, false, false);
+        light = throughput * layered * ShadeHit(-hit.normal, seed + uvec3(0u, 0u, 104729u), false, true, false, false);
     }
     imageStore(rtSubsurfaceImage, pixel, vec4(BrightnessClamp(light, frame.lightClamp.y), 1.0));
 }

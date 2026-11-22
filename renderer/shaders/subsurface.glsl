@@ -66,14 +66,16 @@ vec3 SubsurfaceAlbedo(vec3 A)
 }
 
 // Light from the shadow-casting sun through thin parts (ears, leaves) and
-// thick ones to the side facing away from it: the distance it travelled
-// inside, from where the shadow map first saw the surface, is bracketed
-// by comparing at 1/32 to 4 times the largest diffusion length L =
-// radius / sqrt(3 (1 - albedo)) (the radius the mean free path; skin's red
-// carries about 12 radii). Per channel it passes as diffusion through a
-// slab does: (1 - A^2) e^(-d / L), plus A^2 e^(-d / L - d / radius) for
-// what crosses before it spreads (a random walk gives within 30% of it
-// from half to four diffusion lengths, all at 0). Thin walls let it through whole
+// thick ones to the side facing away from it: the distance d it travelled
+// inside is how far below where the sun's shadow map first saw the surface
+// it is (its raw depths). Per channel it fades over the diffusion length
+// L = radius / sqrt(3 (1 - albedo)) (the radius the mean free path; skin's
+// red carries about 12 radii), as diffusion through a slab passes it:
+// (1 - A^2) e^(-d / L), plus A^2 e^(-d / L - d / radius) for what crosses
+// before it spreads (a random walk gives within 30% of it from half to
+// four diffusion lengths, all at 0), halved: a rounded object spreads it
+// over more of its dark side (a jade ball lit from one side: its dark
+// half 1.08x Karma's; whole, 1.85x). Thin walls let it through whole
 // where the sun reaches their other side (other casters shadow it).
 // Added in the shading and the subsurface pass, so the blur spreads it.
 // ponytail: the sun only; local lights don't shine through.
@@ -92,7 +94,6 @@ vec3 SubsurfaceTransmission(vec3 p, vec3 n)
     vec3 radius = max(m.subsurfaceRadius.xyz, vec3(1e-6));
     vec3 A = clamp(m.subsurface.rgb, 0.0, 1.0);
     vec3 reach = radius * inversesqrt(3.0 * max(1.0 - SubsurfaceAlbedo(A), 1e-6));
-    float largest = max(reach.r, max(reach.g, reach.b));
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
     int c = 0;
     while (c < 4 && depth > frame.cascadeSplits[c]) {
@@ -108,13 +109,7 @@ vec3 SubsurfaceTransmission(vec3 p, vec3 n)
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
     float distance = 0.0, lit = 1.0;
     if (m.refraction.y == 0.0) {  // not thin walled
-        distance = 8.0 * largest;
-        for (int k = 2; k >= -5; --k) {
-            float d = largest * exp2(float(k));
-            if (texture(shadowMap, vec4(uv, float(c), ref - d * perUnit)) > 0.5) {
-                distance = d;
-            }
-        }
+        distance = max(ref - textureLod(shadowMapDepth, vec3(uv, float(c)), 0.0).r, 0.0) / max(perUnit, 1e-12);
     } else {
         // A thin wall: lit where the sun reaches its other side, i.e. where
         // nothing but the wall itself (within a few texels) is nearer the
@@ -132,6 +127,6 @@ vec3 SubsurfaceTransmission(vec3 p, vec3 n)
     if (m.refraction.y != 0.0) {
         return m.subsurface.rgb * m.subsurface.w * light.color.rgb * light.halfHeight.w * back / PI * lit;
     }
-    vec3 through = exp(-distance / reach) * (1.0 - A * A + A * A * exp(-distance / radius));
+    vec3 through = 0.5 * exp(-distance / reach) * (1.0 - A * A + A * A * exp(-distance / radius));
     return m.subsurface.w * light.color.rgb * light.halfHeight.w * back / PI * through;
 }
