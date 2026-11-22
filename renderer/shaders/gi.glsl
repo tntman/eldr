@@ -172,12 +172,18 @@ vec3 GiLimit(vec3 gi, vec3 dome, float share)
     return direct + share * (gi - direct);
 }
 
+float gGiRayLength = 0.0;  // the traced ray's length to p (rt_shade.glsl's ShadeHit); 0: a camera pixel
+
 vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
 {
     float spacing = rt.giOrigin.w;
     ivec3 counts = ivec3(rt.giCounts.xyz);
     // Biased off the surface so it isn't shadowed by itself.
-    vec3 biased = p + (n * 0.2 + v * 0.8) * (0.3 * spacing);
+    // A traced hit closer to its ray's origin than that: the view part at most
+    // half the ray, or a gather ray from the floor into a wall a few cm away
+    // reads the probes from under the floor (contact lines glowed).
+    vec3 biased = p + (n * 0.2 + v * 0.8 * (gGiRayLength > 0.0 ? min(1.0, 0.5 * gGiRayLength / (0.24 * spacing)) : 1.0))
+                          * (0.3 * spacing);
     // At grazing angles the view bias slides along the surface instead of
     // off it: keep it a fixed distance off, or a wall seen edge-on from the
     // probes' far side sits right at their visibility depth, and the

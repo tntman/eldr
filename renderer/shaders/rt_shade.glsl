@@ -396,8 +396,14 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
     float bounced = gGiRole == 1u ? GiFeedback(dot(diffuse, vec3(0.2126, 0.7152, 0.0722)))
                   : gGiRole == 2u ? GiGatherShare(dot(diffuse, vec3(0.2126, 0.7152, 0.0722))) : 1.0;
     if ((frame.features.x & kFeatureGi) != 0u) {
+        gGiRayLength = hit.t;  // a short ray's view bias stays on its path (GiIrradiance)
         vec4 gi = GiIrradiance(p, n, -dir);
-        indirect = mix(indirect, GiLimit(gi.rgb, indirect, bounced), gi.a);
+        gGiRayLength = 0.0;
+        // A gather hit the probes can't vouch for (a gap between objects, a
+        // ball's underside on the floor) takes their light anyway rather than
+        // the whole dome's, which made every contact glow.
+        float trust = gGiRole == 2u && max(gi.r, max(gi.g, gi.b)) > 0.0 ? 1.0 : gi.a;
+        indirect = mix(indirect, GiLimit(gi.rgb, indirect, bounced), trust);
     }
     if (Feature(kFeatureCaustics) && (draws[hit.slot].caustics & kCausticsReceive) != 0u) {
         indirect += CausticDiffuse(p, n, gGiRole == 0u);  // seen in reflections, through glass (a pool's floor), by GI

@@ -2,7 +2,7 @@
 Run from the repo root: usdenv.cmd python docs\\site\\render_images.py [name ...]
 (names: only those images). HDVK_BUILD picks the Eldr build (usdenv's default: build).
 Pictures rendered with husk need Houdini (ELDR_HFS, default 22.0.466) and, for Eldr, its Houdini
-build (ELDR_H22_BUILD, default build-h22 next to HDVK_BUILD). Images are 480 wide JPEGs."""
+build (ELDR_H22_BUILD, default build-h22 next to HDVK_BUILD). Images are 480 wide JPEGs (WIDTHS: wider)."""
 import os
 import pathlib
 import subprocess
@@ -18,6 +18,7 @@ HFS = pathlib.Path(os.environ.get("ELDR_HFS", r"C:\Program Files\Side Effects So
 H22 = pathlib.Path(os.environ.get("ELDR_H22_BUILD",
                                   pathlib.Path(os.environ.get("HDVK_BUILD", ROOT / "build")).parent / "build-h22"))
 WIDTH = 480
+WIDTHS = {"hero": 960}  # README's hero picture
 
 # (image, showcase folder suffix, settings prim[, how]): Eldr through usdrecord, or with husk:
 # "karma" (Karma CPU) or "husk" (Eldr's Houdini build), side by side in the same framing.
@@ -77,6 +78,7 @@ IMAGES = [
     ("ssr_on", "30_11_screen_space_reflections", "ssr"),
     ("ssr_off", "30_11_screen_space_reflections", "ssrOff"),
     ("reflection_probe", "30_23_reflection_probe", "probe"),
+    ("reflection_probe_off", "30_23_reflection_probe", "probeOff"),
     ("ao_on", "30_09_ambient_occlusion", "ambient"),
     ("ao_off", "30_09_ambient_occlusion", "aoOff"),
     # Volumes
@@ -103,6 +105,7 @@ IMAGES = [
     ("tonemap_agx", "30_17_tonemapping", "agx"),
     ("tonemap_linear", "30_17_tonemapping", "linear"),
     ("tonemap_bloom", "30_25_bloom", "bloom"),
+    ("bloom_off", "30_25_bloom", "bloomOff"),
     # AOVs and output
     ("intensity_neutral", "30_16_light_path_intensity", "neutral"),
     ("intensity_indirect", "30_16_light_path_intensity", "indirectBoost"),
@@ -137,6 +140,7 @@ def run(cmd, cwd, env=None):
 
 def render(name, suffix, prim, kind="eldr", tmp=None):
     scene = folder(suffix) / "scene.usda"
+    width = WIDTHS.get(name, WIDTH)
     png = pathlib.Path(tmp) / (name + ".png")
     if kind in ("karma", "husk"):
         env = dict(os.environ, HOUDINI_USER_PREF_DIR=str(pathlib.Path(tmp) / "hprefs__HVER__"),
@@ -146,7 +150,7 @@ def render(name, suffix, prim, kind="eldr", tmp=None):
         if kind == "husk":  # Eldr's Houdini build: same framing and linear output as Karma's
             env.update(HOUDINI_PACKAGE_DIR=str(H22 / "houdini"), PXR_PLUGINPATH_NAME=str(H22))
         ok = run([HFS / "bin" / "husk.exe", "-R", "BRAY_HdKarma" if kind == "karma" else "HdVkRendererPlugin",
-                  "-s", "/Render/" + prim, "--res", WIDTH, WIDTH * 9 // 16, "-o", png, scene], tmp, env)
+                  "-s", "/Render/" + prim, "--res", width, width * 9 // 16, "-o", png, scene], tmp, env)
     else:
         # usdrecord writes a prim's render products instead of the PNG: a layer over the scene drops them.
         layer = pathlib.Path(tmp) / (name + ".usda")
@@ -154,7 +158,7 @@ def render(name, suffix, prim, kind="eldr", tmp=None):
                          '        rel products = []\n    }\n}\n' % (scene.as_posix(), prim))
         scene = layer
         ok = run([sys.executable, USDRECORD, "--renderer", "Eldr", "--camera", "/cam",
-                  "--renderSettingsPrimPath", "/Render/" + prim, "--imageWidth", WIDTH,
+                  "--renderSettingsPrimPath", "/Render/" + prim, "--imageWidth", width,
                   "--disableCameraLight", scene, png], tmp)
     if ok and png.exists():
         QImage(str(png)).save(str(OUT / (name + ".jpg")), "JPG", 82)
