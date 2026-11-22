@@ -232,6 +232,8 @@ int main(int argc, char **argv)
             // frames under validation, over 400 without (failing since the
             // check was added, b616182). The check is about the lazy AOVs.
             delegate->SetRenderSetting(TfToken("eldr:autoExposure"), VtValue(false));
+            // eldr:stillDelay is wall-clock time too: at under 1 ms a frame its 0.3 s outlast the 400 frames.
+            delegate->SetRenderSetting(TfToken("eldr:stillDelay"), VtValue(0.0f));
             // Houdini's pattern: colour read every frame, the rest now and then.
             auto frame = [&](double angle) {
                 controller.SetFreeCameraMatrices(GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle)) * view,

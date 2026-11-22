@@ -722,6 +722,14 @@ public:
     // until the second Render after; the caller may change it (depth).
     void *HostOutput(int output) const { return _delivered[output]; }
 
+    // A frame keeps the work the last one left the same instead of redoing
+    // it: skinned joints and the pools' copies for motion blur time samples
+    // while the scene's pools stay, and across a film's samples the planar
+    // mirrors' renders and unjittered sun cascades.
+    // The image is the same either way; HDVK_NO_SAMPLE_REUSE=1 starts with
+    // it off (A/B tests).
+    static bool sampleReuse;
+
     // False while auto-exposure adapts or TAA is still accumulating a still
     // camera: keep rendering frames.
     bool IsConverged() const;
@@ -981,13 +989,24 @@ private:
     uint32_t _lodFadeLeft = 0, _lodDrawCount = 0;  // frames crossfades may still run; commands when counted
     float _lodViewProj[16] = {};  // the camera the atlas last drew levels of detail for
     uint32_t _lodFrame = 1;       // frames with levels of detail (cull.comp's lodState); not 0: a cleared state would count as drawn last frame
+    float _planarViewProj[16] = {};  // the camera the planar mirrors were last rendered for
+    bool _planarsRendered = false;   // by this _reflections
     VkBuffer _prevJointsSource = VK_NULL_HANDLE;
     uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;
     // GPU timestamps: one at the start, then one closing each pass.
-    static constexpr uint32_t kMaxTimestamps = 32;
+    static constexpr uint32_t kMaxTimestamps = 64;
+    // HDVK_TIMING=3: the film samples' CPU laps and GPU passes summed (from
+    // the third sample: the first two build and compile), printed by the destructor.
+    struct Totals {
+        std::vector<std::pair<std::string, double>> cpu, gpu;
+        uint32_t frames = 0;
+        double cpuMs = 0, gpuMs = 0, waitMs = 0;
+        static void Add(std::vector<std::pair<std::string, double>> &to, const char *name, double ms);
+    } _totals;
+    bool _totalsFrame = false;  // the frame in flight counts
     VkQueryPool _timestamps = VK_NULL_HANDLE;  // null: the queue has no timestamps
     double _timestampMs = 0;                   // milliseconds per tick
     std::vector<const char *> _passes;         // the pass each timestamp after the first closes
@@ -1015,6 +1034,7 @@ private:
     uint64_t _atlasVersion = 0;
     bool _fullShadowAtlas = false;  // _shadowAtlas is kShadowAtlasSize square (_CreateShadowAtlas)
     std::vector<float> _atlasKey;               // the tiles' matrices and rects
+    std::vector<float> _cascadesKey;            // the sun cascades as last drawn: their matrices, size, tint maps
     VkImageView _shadowLayers[kCascades] = {};  // per-cascade render targets
     Image _brdfLut;
     Image _blackCube;                           // bound when there is no dome
@@ -1052,6 +1072,22 @@ private:
         float endViewProj[16] = {};  // the camera the motion ended at: the shutter's only while it stays
     } _shutter;
     Buffer _shutterRows, _shutterJoints, _shutterWeights, _savedInstances, _savedJoints, _savedWeights;
+    // The scene's pools as skin.comp and the shutter read them. While they
+    // stay (a film's samples) the work of the last frames stands: the joints
+    // skin.comp wrote (_skinnedPools; a time sample's move is put back),
+    // _prevJoints' copy of them (_prevJointsPools; kind 1: the pool's joints
+    // as a frame found them skinned, 2: with the shutter's poses over
+    // them) and the pools saved for a time sample (_savedPools).
+    struct Pools {
+        uint64_t scene = 0, version = 0;
+        VkBuffer instances = VK_NULL_HANDLE, joints = VK_NULL_HANDLE, weights = VK_NULL_HANDLE;
+        bool operator==(const Pools &o) const
+        {
+            return scene == o.scene && version == o.version && instances == o.instances && joints == o.joints &&
+                   weights == o.weights;
+        }
+    } _skinnedPools, _prevJointsPools, _savedPools;
+    int _prevJointsKind = 0;
     bool _shutterMoved = false;     // the last frame rendered the scene at a shutter time
     float _prevCameraPos[3] = {};   // with _prevViewProj
     float _rtPrevViewProj[16] = {};  // the last frame's jittered camera (RayTracing::Work::prevViewProj)

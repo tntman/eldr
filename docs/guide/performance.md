@@ -113,3 +113,12 @@ What Eldr does to start sooner:
 | Caustics | about 7 ms with 65536 photons (at 960x540) |
 
 For a seconds-per-frame render they matter little: turn on what the shot needs.
+
+A film's samples differ only in what is sampled: the pixel jitter, the shutter time, the lens point, and the random effects (rays, jittered light shapes, fog). The rest is done once per film and kept:
+
+- skinned poses (a crowd's joints);
+- planar mirror renders, unless lens or shutter samples move the camera;
+- the sun's shadow maps when the sun isn't jittered;
+- ray-tracing structures of meshes that don't move.
+
+`HDVK_TIMING=3` prints the film's average sample when the render ends: GPU and CPU milliseconds per pass (`HdVk film gpu:`, `HdVk film cpu:`), so you can see which effect a slow render spends its time on.

@@ -19,7 +19,8 @@
 
 namespace vkr {
 
-// HDVK_TIMING=3: the slow parts of every frame and commit (edits), not only the first few.
+// HDVK_TIMING=3: the slow parts of every frame and commit (edits), not only the first few,
+// and a film's samples summed per pass when the renderer goes (Renderer::Totals).
 inline int TimingLevel()
 {
     static const int level = std::getenv("HDVK_TIMING") ? std::atoi(std::getenv("HDVK_TIMING")) : 0;

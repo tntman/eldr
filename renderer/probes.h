@@ -48,6 +48,14 @@ public:
     // that motion blur time sample (Frame::nestedShutter, nestedCapture).
     // The GPU is idle on return.
     void RenderPlanars(const Scene &scene, const Renderer::Frame &frame, float shutter, bool capture);
+    // Instead of RenderPlanars, for a frame that sees the mirrors exactly as
+    // the last one did (a film's next sample: only the pixel jitter moved):
+    // the last renders stay, in SHADER_READ_ONLY_OPTIMAL as that frame left them.
+    void KeepPlanars() { _planarsKept = true; }
+    bool PlanarsKept() const { return _planarsKept; }
+    // Every mirror's renderer has settled (no level of detail still
+    // crossfades): another render of the same view gives the same image.
+    bool PlanarsSettled() const;
 
     // The probes, the smallest influence box first: each a cube (world
     // directions; level 0 alpha: distance, 0 for sky) prefiltered by
@@ -98,6 +106,7 @@ private:
     bool _pending = false;
     std::vector<std::unique_ptr<Renderer>> _planarRenderers;  // one per mirror
     std::vector<Planar> _planars;                             // rendered this frame
+    bool _planarsKept = false;                                // or kept from the last (KeepPlanars)
 };
 
 } // namespace vkr

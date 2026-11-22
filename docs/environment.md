@@ -31,7 +31,7 @@ The package also adds its folder to `HOUDINI_PATH`, which lists Eldr in Solaris'
 
 | Variable | What it does |
 |---|---|
-| `HDVK_TIMING` | `1`: prints load times and GPU time per pass (per tile for tiled renders). `2`: also writes a CSV row per frame, for viewport frame pacing |
+| `HDVK_TIMING` | `1`: prints load times and GPU time per pass (per tile for tiled renders). `2`: also writes a CSV row per frame, for viewport frame pacing. `3`: also prints the slow parts of every frame and, when the render ends, the film's average sample: CPU and GPU milliseconds per pass (`HdVk film gpu:`, `HdVk film cpu:`) |
 | `HDVK_TIMING_CSV` | The CSV file for `HDVK_TIMING=2`; default `%TEMP%\eldr_timing_<time>.csv` |
 | `HDVK_PIPELINE_CACHE_DIR` | Folder for the GPU program cache and the compressed-texture cache; default `%LOCALAPPDATA%\Eldr` |
 | `HDVK_NO_RAY_TRACING` | `1`: behaves as if the GPU had no ray tracing; the [RT] settings are skipped |
@@ -42,6 +42,7 @@ The package also adds its folder to `HOUDINI_PATH`, which lists Eldr in Solaris'
 | `HDVK_DEBUG_HOLD` | `1`: prints per frame whether the camera moved, the still delay, the render width and the GPU time |
 | `HDVK_NO_STATS` | `1`: reports only the renderer name to the app's render stats |
 | `HDVK_NO_POSE_SHARE`, `HDVK_NO_SHUTTER_SHARE` | `1`: each mesh poses its skeleton, each prototype samples the shutter on its own (A/B tests of crowd sync) |
+| `HDVK_NO_SAMPLE_REUSE` | `1`: every film sample redoes the work the samples share (skinning, planar mirror renders, unjittered sun shadow maps), for A/B tests; the image is the same |
 | `HDVK_SYNC_TEARDOWN` | `1`: waits for the GPU to shut down when a render ends, instead of in the background (the tests set it) |
 | `HD_ENABLE_DEFERRED_SKINNING` | USD's own: `1` leaves UsdSkel crowds to Eldr, so instanced agents stay instances (much less memory). USD reads it at start, so set it before the app starts |
 
