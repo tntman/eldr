@@ -467,7 +467,7 @@ def husk_once(plugin, prim, scene, exr, env, force, *args):
     """One husk render to exr unless it is there (and not force); (log, wall s, peak GPU MB or None)."""
     from render_production import husk  # run() with nvidia-smi sampling
     log = exr[:-4] + ".log"
-    if force or not os.path.exists(exr):
+    if force or not os.path.exists(exr[:-4] + ".json"):  # the json stays when a huge EXR is deleted
         code, wall, mem = husk([HUSK, "-R", plugin, "-s", prim, "-f", "1", "-n", "1", "-V", "2", *args, "-o", exr,
                                 scene], log, dict(env, HDVK_TIMING_CSV=exr[:-4] + ".csv"))
         json.dump(dict(wall=wall, mem=mem), open(exr[:-4] + ".json", "w"))
@@ -680,7 +680,7 @@ def extra_tiles(s, d, env, force):
         exr = os.path.join(d, "mem_%dx%d_%s.exr" % (rw, rh, "tiles" if tiled else "whole"))
         m = husk_once("HdVkRendererPlugin", "/Render/" + ("tiles" if tiled else "whole"), wrap, exr, env, force,
                       "--res", str(rw), str(rh))
-        if os.path.exists(exr):
+        if m.get("wall") is not None:
             sec, _ = eldr_times(exr[:-4] + ".log", exr[:-4] + ".csv")
             rows.append("| %d × %d | %s | %s | %s |" % (
                 rw, rh, "%d-pixel tiles" % TILE if tiled else "whole", "-" if not m.get("mem") else
@@ -751,7 +751,7 @@ def main():
 
 def table(rows, link):
     keys = [r for r, _, _ in RENDERERS]
-    out = ["| Scene | Samples (Eldr / Karma) | %s | Brightness vs Karma CPU (default / final / XPU) |"
+    out = ["| Scene | Samples (Eldr / Karma) | %s | Brightness vs Karma CPU (raster / ray traced / XPU) |"
            % " | ".join(LABEL[k] for k in keys), "|---|---|" + "---:|" * len(keys) + "---|"]
     for r in rows:
         t = ["-" if r.get(k + "_sec") is None else duration(r[k + "_sec"]) + (
