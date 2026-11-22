@@ -1131,7 +1131,8 @@ void main()
     const bool reflects = max(max(FssEss.r, FssEss.g), FssEss.b) > 1e-4;
     // Holdouts write black (PassOutput): no ray, or denoised SSR adds its light back later.
     const bool holdoutPixel = Feature(kFeatureHoldouts) && draws[instances[inSlot].draw].holdout != 0u;
-    float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u && reflects && !holdoutPixel
+    // A cutout's holes are discarded at the end (after their derivatives): no ray.
+    float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u && reflects && !holdoutPixel && present
                           ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
     // The single ray's direction and width: anisotropic surfaces reflect
     // along their bent normal, as wide as the stretched lobe's mean alpha.
