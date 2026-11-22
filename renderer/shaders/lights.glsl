@@ -68,6 +68,11 @@ float LightRange(Light light)
            length(light.halfWidth.xyz + light.halfHeight.xyz);
 }
 
+// A local light's shadow map ends at its range (Renderer::_PlanLocalShadows):
+// a receiver past it (lit by LightWindow's stochastic reach) compares its
+// depth just short of the far plane, shadowed by what the map holds only.
+const float kShadowFarRef = 0.9999995;
+
 // Stochastic light ranges (frame.localLights.z, Tokuyoshi and Harada's
 // stochastic light culling): this sample, light `index` reaches
 // LightRange / sqrt(u), u uniform per light and sample. Past LightRange it

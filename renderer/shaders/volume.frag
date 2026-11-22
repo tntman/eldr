@@ -232,7 +232,7 @@ float SunTileShadow(uint index, vec3 x, vec3 l)
     if (any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
         return 1.0;
     }
-    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, ndc.z * 0.5 + 0.5));
+    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, min(ndc.z * 0.5 + 0.5, kShadowFarRef)));
 }
 
 // A local light's atlas tiles at a point in the medium, as fog_inject.comp
@@ -258,7 +258,7 @@ float LocalShadow(uint index, vec3 x)
     if (clip.w <= 0.0 || any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
         return 1.0;  // outside a spot's tile: its cone doesn't light it anyway
     }
-    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, ndc.z * 0.5 + 0.5));
+    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, min(ndc.z * 0.5 + 0.5, kShadowFarRef)));
 }
 
 // Light of a sphere/rect/disk light arriving at x, as from a point (its

@@ -256,7 +256,7 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     vec4 clip = t.viewProj * vec4(q, 1.0);
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw;
-    float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
+    float ref = min(ndc.z * 0.5 + 0.5, kShadowFarRef);  // same z remap as the vertex shader
     float atlasSize = float(textureSize(shadowAtlas, 0).x);
     vec2 lo = t.rect.xy + 0.5 / atlasSize, hi = t.rect.xy + t.rect.zw - 0.5 / atlasSize;
     float size = t.params.w;
