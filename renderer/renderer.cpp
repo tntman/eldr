@@ -3701,11 +3701,23 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // reflections replace SSR where they apply (mesh.frag then traces what
     // is left itself, as it does for glass and coats). Its targets exist
     // only while SSR is on and a drawn material can reflect.
+    // The mirror rays (no eldr:ssrDenoise) add their reflection straight
+    // to the colour, so mesh.frag keeps them where something after it
+    // reshapes or splits the colour: toon bands, the light splits (their
+    // AOVs, the light path intensities: the dome's share of a ray that
+    // misses is direct light there) and refracting surfaces traced as
+    // opaque ones.
     // HDVK_SSR_INLINE=1: the mirror rays in mesh.frag, as before (A/B).
     const char *ssrInlineEnv = std::getenv("HDVK_SSR_INLINE");
     const bool ssrInline = ssrInlineEnv && *ssrInlineEnv == '1';
+    const bool ssrMirrorsHere = ssrInline || (frame.toon && (frame.toonBands > 0 || gpu.toon)) ||
+                                (frame.extraAovs && Aovs::NeedsSplits(out.aovs)) || frame.directIntensity != 1.0f ||
+                                frame.indirectIntensity != 1.0f || (frame.rtRefraction && _rt && gpu.refraction);
+    // eldr:movingSsrResolution: while moving (and the ramp after, never in
+    // the film) one ray per 2 x 2 block.
+    const bool ssrBlocks = (moving || ramp) && !film && frame.movingSsrResolution > 1;
     const bool ssrPass = frame.ssr && frame.postProcess && frame.depthPrepass && gpu.reflective && gpu.drawCount > 0 &&
-                         !(tracedReflections && _rt) && (frame.ssrDenoise || !ssrInline);
+                         !(tracedReflections && _rt) && (frame.ssrDenoise || ssrBlocks || !ssrMirrorsHere);
     if (!ssrPass) {
         _ssr.Release();
     }
@@ -3713,16 +3725,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
         fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
-        // Mirror rays (5), or denoised (eldr:ssrDenoise: 1).
-        // eldr:movingSsrResolution: while moving (and the ramp after, never
-        // in the film) one ray per 2 x 2 block (2 denoised, 3 the mirror rays).
-        // eldr:ssrInterleave: else, denoised, the rougher surfaces trace
-        // one pixel of each block a frame, in turn (4).
-        const bool blocks = (moving || ramp) && !film && frame.movingSsrResolution > 1;
+        // Mirror rays (3: per pixel, or per block while moving), or
+        // denoised (eldr:ssrDenoise: 1, per block 2).
+        // eldr:ssrInterleave: denoised per pixel, the rougher surfaces
+        // trace one pixel of each block a frame, in turn (4).
         if (ssrPass) {
-            ssrInterleaved = frame.ssrDenoise && frame.ssrInterleave && !blocks;
-            fd.ssr[2] = blocks ? (frame.ssrDenoise ? 2.0f : 3.0f) : !frame.ssrDenoise ? 5.0f : ssrInterleaved ? 4.0f : 1.0f;
-            _ssr.Prepare(blocks ? 2 : 1, _setLayout, frame.ssrDenoise);
+            ssrInterleaved = frame.ssrDenoise && frame.ssrInterleave && !ssrBlocks;
+            fd.ssr[2] = !frame.ssrDenoise ? 3.0f : ssrBlocks ? 2.0f : ssrInterleaved ? 4.0f : 1.0f;
+            _ssr.Prepare(ssrBlocks ? 2 : 1, _setLayout, frame.ssrDenoise);
         }
     }
 

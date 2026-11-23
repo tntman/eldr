@@ -36,7 +36,6 @@ struct DenoiseParams {  // mirror of the push block in ssr_denoise.frag
     // x: pixels per block's side (1, 2), y: 1 = the blocks' rays as traced (no denoiser),
     // z: interleaved, 1 + the pixel of each block traced this frame,
     // w (the trace): over the pixels, 1 the smooth surfaces only (interleaved), 2 all
-    // (the mirror rays added to the colour, ssr_trace.frag's ADD build, read only splits.x)
     float blocks[4];
 };
 
@@ -274,9 +273,8 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView
     stored(_normals);
     stored(_factor);
     if (!blocks && !denoise) {
-        // The mirror rays, each pixel's reflection added to the colour (and the scene set's splits) by the trace.
+        // The mirror rays, each pixel's reflection added to the colour by the trace (ssr_trace.frag's ADD build).
         DenoiseParams add{};
-        add.splits[0] = addToSplits ? 1.0f : 0.0f;
         DrawFullscreen(cmd, _traceAdd, _traceLayout, scene, color, _width, _height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
                        &add, sizeof(add));
         StorageBarrier(cmd);

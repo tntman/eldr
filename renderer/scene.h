@@ -986,6 +986,7 @@ public:
         bool refraction = false;
         bool holdouts = false;  // a drawn mesh is a holdout (Mesh::holdout)
         bool reflective = false;  // a mesh's material is in SSR's range (Material::SsrRange; none: it is)
+        bool toon = false;        // a mesh's material has toon bands (Material::toonBands)
         // Caustics: the lights that send photons (indices into lights:
         // Light::caustics, distant, sphere, rect, disk) and the drawn
         // casters' world bounds (none: min > max).

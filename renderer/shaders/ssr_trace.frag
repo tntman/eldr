@@ -13,12 +13,10 @@
 // other pixels their neighbours' rays.
 // Per block (Frame::movingSsrResolution): the ray of each block's first
 // pixel, into the block's texel (radiance and pdf: the colour output).
-// Built with ADD: the mirror rays over the pixels (frame.ssr.z 5, the
-// default SSR without the denoiser), drawn over the scene's colour, to
-// which each pixel's reflection is added at once: the dome's share of it
-// as direct light (the light splits and the light path intensities), the
-// rest as indirect glossy. A shader of its own, so neither build carries
-// the other's code.
+// Built with ADD: the mirror rays over the pixels (the default SSR,
+// without the denoiser, when not moving), drawn over the scene's colour,
+// to which each pixel's reflection is added at once. A shader of its own,
+// so neither build carries the other's code.
 
 #include "frame.glsl"
 
@@ -28,14 +26,11 @@ layout(set = 0, binding = 76) uniform sampler2DArray previousSplits;
 layout(set = 0, binding = 13) uniform sampler2D sceneDepth;
 #ifdef ADD
 layout(set = 0, binding = 72, rgba16f) uniform readonly image2D ssrSurface;  // the reflection without a hit, GGX alpha
-// The light splits (mesh.frag's lightSplits): layer 2 the direct glossy light, 3 the indirect, from 11 the light groups'.
-layout(set = 0, binding = 67, rgba16f) uniform image2DArray lightSplits;
 #else
 layout(set = 0, binding = 72, rgba16f) uniform image2D ssrSurface;     // the reflection without a hit, GGX alpha
 layout(set = 0, binding = 73, rgba16f) uniform image2D ssrDirections;  // per block
 #endif
-layout(set = 0, binding = 74, rgba16f) uniform readonly image2D ssrNormals;       // normal (octahedral); geometric normal,
-                                                                                  // or the dome's share (mirror rays)
+layout(set = 0, binding = 74, rgba16f) uniform readonly image2D ssrNormals;       // normal, geometric normal (octahedral)
 layout(set = 0, binding = 75, rgba16f) uniform readonly image2D ssrFactor;        // a > 0: reflects
 
 #include "ssr_trace.glsl"
@@ -89,21 +84,9 @@ void main()
     vec4 hit;
     float w = TraceReflection(p, reflect(-ViewDirection(p), OctDecode(normals.xy)), 2.0 * surface.a, hit);
     // What mesh.frag's own mirror ray adds: the weight times what the
-    // pixel reflects, the hit over the probe's or dome's light.
-    vec3 total = f.rgb * mix(surface.rgb, hit.rgb + (1.0 - hit.a) * surface.rgb, w);
-    vec3 dome = f.rgb * normals.z * surface.rgb * (1.0 - w * hit.a);
-    if (pc.splits.x != 0.0) {
-        ivec3 at = ivec3(px, 2);
-        imageStore(lightSplits, at, imageLoad(lightSplits, at) + vec4(dome, 0.0));
-        at.z = 3;
-        imageStore(lightSplits, at, imageLoad(lightSplits, at) + vec4(total - dome, 0.0));
-        at.z = 11 + int(frame.aovs.z) - 1;  // the dome's light group
-        if (frame.aovs.z != 0u && at.z < imageSize(lightSplits).z) {
-            imageStore(lightSplits, at, imageLoad(lightSplits, at) + vec4(dome, 0.0));
-        }
-    }
-    vec2 intensity = frame.lightPath.z != 0.0 ? frame.lightPath.xy : vec2(1.0);
-    outRay = vec4((f.a - 1.0) * (intensity.x * dome + intensity.y * (total - dome)), 0.0);
+    // pixel reflects, the hit over the probe's or dome's light; as much
+    // of it as shows through the fog (the weight's alpha).
+    outRay = vec4((f.a - 1.0) * f.rgb * mix(surface.rgb, hit.rgb + (1.0 - hit.a) * surface.rgb, w), 0.0);
 }
 #else
 void main()

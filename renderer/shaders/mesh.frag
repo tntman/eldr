@@ -852,8 +852,7 @@ vec3 MultiBounce(float visibility, vec3 albedo)
 // each opaque pixel to trace its ray after this pass (main, below).
 layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // the reflection without a hit; alpha or 0
 layout(set = 0, binding = 73, rgba16f) uniform writeonly image2D ssrDirections;  // no hit yet, GGX alpha
-layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;     // the normal (octahedral); the geometric
-                                                                                 // normal, or the dome's share (mirror rays)
+layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;     // the normal, the geometric normal (octahedral)
 layout(set = 0, binding = 75, rgba16f) uniform writeonly image2D ssrFactor;      // the reflection's weight, 1 + the share that shows
 #include "ssr_trace.glsl"
 
@@ -1152,30 +1151,17 @@ void main()
     // it shows through the fog and the surface's presence rides in alpha).
     vec3 ssrAdded = vec3(0.0);
     bool ssrAdds = false;
-    // SsrDenoise's mirror rays (frame.ssr.z 3, 5) add their reflection after
-    // this pass: only where nothing after here reshapes the colour (toon
-    // bands) or takes part of it away (refraction); those pixels trace here.
-    // (ToonShade's own test of the bands, brdf.glsl.)
-    bool toonBands = Feature(kFeatureToon) && frame.styles.y != 0u;
-#ifdef LAYERS
-    toonBands = toonBands || (layers.toonBands > 0.0 && (frame.styles.x & kStyleToon) != 0u);
-#endif
-    const bool glossy = frame.ssr.z != 3.0 && frame.ssr.z != 5.0;
-    if (frame.ssr.z > 0.0 && ssrWeight > 0.0 && RtOpaque() &&
-        (glossy || (gRefracted <= 0.0 && !toonBands))) {
-        // SsrDenoise's: ssr_trace.frag traces after this pass and its
-        // reflection, times FssEss and the weight, is added then.
+    if (frame.ssr.z > 0.0 && ssrWeight > 0.0 && RtOpaque()) {
+        // SsrDenoise's: ssr_trace.frag traces after this pass, and its
+        // passes add FssEss times the weight times the reflection.
         // Denoised (frame.ssr.z 1, 2, 4) a GGX-sampled ray, glossy up to
-        // roughness 0.8; else (5, and 3 while moving) the mirror ray along
+        // roughness 0.8; else (3, while moving) the mirror ray along
         // ssrDir, as wide as ssrWidth. Stored for it: what the pixel
         // reflects without a hit (the probe's or dome's), the ray's GGX
-        // alpha and the normals. The denoised rays' alpha goes with the
-        // directions (a 0 beside the reflection: no ray yet) unless traced
-        // per block of pixels (2: Frame::movingSsrResolution). The mirror
-        // rays store, instead of the geometric normal, how much of what
-        // the pixel reflects without a hit is the dome's own light (the
-        // light splits' direct share, Karma's convention).
-        const bool blocks = frame.ssr.z == 2.0 || frame.ssr.z == 3.0;
+        // alpha and the normals. Per block of pixels (2, 3:
+        // Frame::movingSsrResolution) the alpha rides with the reflection;
+        // else a 0 there says the pixel has no ray yet.
+        const bool glossy = frame.ssr.z != 3.0, blocks = frame.ssr.z == 2.0 || frame.ssr.z == 3.0;
         if (glossy) {
             ssrWeight = 1.0 - smoothstep(0.5, 0.8, perceptual);
 #ifdef LAYERS
@@ -1184,19 +1170,11 @@ void main()
         }
         ivec2 px = ivec2(gl_FragCoord.xy);
         vec3 m = v + ssrDir;  // the mirror ray's normal
-        vec2 other = OctEncode(ng);
-        if (!glossy) {
-            const vec3 kLuminance = vec3(0.2126, 0.7152, 0.0722);
-            other = vec2(LightSplits() && frame.aovs.y != 0u
-                             ? clamp(dot(domeSpecular * domeKept * specularAO, kLuminance) /
-                                         max(dot(specular, kLuminance), 1e-6), 0.0, 1.0)
-                             : 0.0, 0.0);
-        }
-        imageStore(ssrRays, px, vec4(specular, !glossy ? 0.5 * ssrWidth : blocks ? a : 0.0));
-        if (glossy && !blocks) {
+        imageStore(ssrRays, px, vec4(specular, !blocks ? 0.0 : glossy ? a : 0.5 * ssrWidth));
+        if (!blocks) {
             imageStore(ssrDirections, px, vec4(0.0, 0.0, -1.0, a));
         }
-        imageStore(ssrNormals, px, vec4(OctEncode(glossy || dot(m, m) < 1e-8 ? n : normalize(m)), other));
+        imageStore(ssrNormals, px, vec4(OctEncode(glossy || dot(m, m) < 1e-8 ? n : normalize(m)), OctEncode(ng)));
         ssrAdded = FssEss * ssrWeight;
         ssrAdds = true;
         specular *= 1.0 - ssrWeight;

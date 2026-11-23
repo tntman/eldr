@@ -2339,6 +2339,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.refraction = false;
     _gpu.holdouts = false;
     _gpu.reflective = false;
+    _gpu.toon = false;
     _gpu.subsurface.clear();
     _gpu.subsurfaceVariant.clear();
     std::vector<uint8_t> scatters(slots);  // the subsurface pass draws the slot (and its levels)
@@ -2416,6 +2417,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             }
         }
         _gpu.reflective = _gpu.reflective || !mat || mat->SsrRange();
+        _gpu.toon = _gpu.toon || (mat && mat->toonBands > 0);
         if (mat && mat->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
         } else if (mat &&
