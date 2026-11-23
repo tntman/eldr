@@ -4,7 +4,8 @@
 
 namespace vkr {
 
-// Denoised glossy screen-space reflections (Frame::ssrDenoise; Stachowiak
+// Screen-space reflections' rays, traced after the shading pass, and denoised
+// glossy screen-space reflections (Frame::ssrDenoise; Stachowiak
 // 2015, "Stochastic Screen-Space Reflections", as in EEVEE). mesh.frag's
 // opaque pixels store what they reflect without a hit, their ray's GGX
 // alpha, normals and the reflection's weight (Rays() .. Factor(), scene
@@ -36,6 +37,12 @@ namespace vkr {
 // kernel to span a block (ssr_trace.frag's kInterleavedAlpha) only one
 // pixel of each 2 x 2 block is traced, another each frame, and pass 1
 // gives the pixels without a ray their nearest traced neighbours'.
+// Without the denoiser at full resolution (the default SSR's mirror rays)
+// ssr_trace.frag draws over the colour and adds each pixel's reflection
+// itself: three targets (what the pixel reflects without a hit, its
+// normal, the weight), 24 bytes a pixel, and no passes.
+// The targets exist from Prepare to Release (or Resize): the Renderer
+// keeps them only while SSR is on and a drawn material can reflect.
 class SsrDenoise {
 public:
     static constexpr VkFormat kFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -50,13 +57,16 @@ public:
     void Resize(uint32_t width, uint32_t height, VkImageView depth);
     // Before the frame's descriptors are written, with the GPU idle: makes
     // the targets on first use and when `divisor` (1: every pixel traces in
-    // ssr_trace.frag, 2: every 2 x 2 block) changes, which starts the
-    // history over. `sceneLayout`: the scene set's (the trace reads it).
-    void Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout);
+    // ssr_trace.frag, 2: every 2 x 2 block) or `denoise` (the passes'
+    // targets too) changes, which starts the history over. `sceneLayout`:
+    // the scene set's (the trace reads it).
+    void Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout, bool denoise);
+    // Frees the targets (the GPU idle, as Prepare).
+    void Release() { _Destroy(); }
     uint32_t Divisor() const { return _divisor; }
 
-    // What mesh.frag writes (GENERAL layout; 1 x 1 placeholders until
-    // Prepare).
+    // What mesh.frag writes (GENERAL layout; null until Prepare, the
+    // directions also without the denoiser at full resolution).
     VkImageView Rays() const { return _rays.view; }
     VkImageView Directions() const { return _directions.view; }
     VkImageView Normals() const { return _normals.view; }
@@ -64,9 +74,9 @@ public:
 
     // Before the shading pass: marks every pixel as without a ray.
     void Clear(VkCommandBuffer cmd);
-    // After it: the trace below full resolution (with the scene's set
-    // `scene`), then the three passes (`denoise` false, below full
-    // resolution only: the last alone), adding the result to `color` (in
+    // After it: the trace (with the scene's set `scene`), then the three
+    // passes (without Prepare's `denoise`: below full resolution the last
+    // alone, at full resolution none, the trace adds), adding the result to `color` (in
     // COLOR_ATTACHMENT_OPTIMAL). Matrices in row-vector order; `history`
     // false starts the history over. `dimension` in [0, 1): the sample
     // dimension's value turning the blue noise (kDimSsrDenoise); < 0:
@@ -74,21 +84,19 @@ public:
     // 0, or 1 + the pixel of each 2 x 2 block (x + 2 y) traced this frame.
     void Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView color, const float invViewProj[16],
                  const float prevViewProj[16], const float eye[3], uint32_t noise, bool history, float dimension,
-                 VkImageView splits, bool addToSplits, float indirect = 1.0f, bool denoise = true,
-                 uint32_t interleave = 0);
+                 VkImageView splits, bool addToSplits, float indirect = 1.0f, uint32_t interleave = 0);
     // The 64 x 64 RGBA8 blue noise (Renderer's), before the first Prepare.
     void SetBlueNoise(VkImageView noise) { _blueNoise = noise; }
 
 private:
     void _Destroy();
-    void _Placeholders();
 
     Device &_dev;
     VkSampler _nearest = VK_NULL_HANDLE, _linear = VK_NULL_HANDLE;
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE, _traceLayout = VK_NULL_HANDLE;  // the trace's: the scene set
     VkPipeline _spatial = VK_NULL_HANDLE, _temporal = VK_NULL_HANDLE, _composite = VK_NULL_HANDLE;
-    VkPipeline _trace = VK_NULL_HANDLE;  // made by the first Prepare
+    VkPipeline _trace = VK_NULL_HANDLE, _traceAdd = VK_NULL_HANDLE;  // made by the first Prepare; over the colour, additive
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _sets[2] = {};  // history[i] this frame's
     // GENERAL: mesh.frag's and the trace's storage images. Below full
@@ -100,6 +108,7 @@ private:
     uint32_t _current = 0;
     VkImageView _depth = VK_NULL_HANDLE, _blueNoise = VK_NULL_HANDLE;
     uint32_t _width = 0, _height = 0, _divisor = 1;
+    bool _denoise = true;  // Prepare's: the passes' targets exist
     bool _fresh = true;  // the history's targets are new, or the last Resolve left them out
 };
 

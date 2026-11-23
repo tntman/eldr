@@ -13,6 +13,10 @@
 // other pixels their neighbours' rays.
 // Per block (Frame::movingSsrResolution): the ray of each block's first
 // pixel, into the block's texel (radiance and pdf: the colour output).
+// Built with ADD: the mirror rays over the pixels (the default SSR,
+// without the denoiser, when not moving), drawn over the scene's colour,
+// to which each pixel's reflection is added at once. A shader of its own,
+// so neither build carries the other's code.
 
 #include "frame.glsl"
 
@@ -20,8 +24,12 @@ layout(set = 0, binding = 11) uniform sampler2D ambientOcclusion;
 layout(set = 0, binding = 12) uniform sampler2D previousColor;
 layout(set = 0, binding = 76) uniform sampler2DArray previousSplits;
 layout(set = 0, binding = 13) uniform sampler2D sceneDepth;
+#ifdef ADD
+layout(set = 0, binding = 72, rgba16f) uniform readonly image2D ssrSurface;  // the reflection without a hit, GGX alpha
+#else
 layout(set = 0, binding = 72, rgba16f) uniform image2D ssrSurface;     // the reflection without a hit, GGX alpha
 layout(set = 0, binding = 73, rgba16f) uniform image2D ssrDirections;  // per block
+#endif
 layout(set = 0, binding = 74, rgba16f) uniform readonly image2D ssrNormals;       // normal, geometric normal (octahedral)
 layout(set = 0, binding = 75, rgba16f) uniform readonly image2D ssrFactor;        // a > 0: reflects
 
@@ -62,6 +70,25 @@ vec3 OctDecode(vec2 e)
     return normalize(n);
 }
 
+#ifdef ADD
+void main()
+{
+    ivec2 px = ivec2(gl_FragCoord.xy);
+    vec4 f = imageLoad(ssrFactor, px);
+    if (f.a <= 0.0) {
+        discard;  // nothing reflects here: nothing to add
+    }
+    vec2 ndc = (vec2(px) + 0.5) / frame.viewport.xy * 2.0 - 1.0;
+    vec3 p = Unproject(vec3(ndc, texelFetch(sceneDepth, px, 0).r * 2.0 - 1.0));
+    vec4 surface = imageLoad(ssrSurface, px), normals = imageLoad(ssrNormals, px);
+    vec4 hit;
+    float w = TraceReflection(p, reflect(-ViewDirection(p), OctDecode(normals.xy)), 2.0 * surface.a, hit);
+    // What mesh.frag's own mirror ray adds: the weight times what the
+    // pixel reflects, the hit over the probe's or dome's light; as much
+    // of it as shows through the fog (the weight's alpha).
+    outRay = vec4((f.a - 1.0) * f.rgb * mix(surface.rgb, hit.rgb + (1.0 - hit.a) * surface.rgb, w), 0.0);
+}
+#else
 void main()
 {
     // The rays go into their pixels' own texels, or their blocks'.
@@ -87,7 +114,7 @@ void main()
     // Interleaved, each pixel has its own sequence of samples (every fourth frame's).
     vec2 noisePixel = pixels ? vec2(px) : gl_FragCoord.xy;
     vec3 l = reflect(-v, n);
-    if (frame.ssr.z < 3.0) {
+    if (frame.ssr.z != 3.0) {
         // As mesh.frag's denoised ray.
         float NoV = max(dot(n, v), 1e-4);
         vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
@@ -122,3 +149,4 @@ void main()
         imageStore(ssrDirections, q, direction);
     }
 }
+#endif
