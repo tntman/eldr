@@ -142,12 +142,13 @@ void SsrDenoise::Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout, bo
     const VkImageUsageFlags target = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     // Blocks: the last one of an odd size holds one pixel.
     const uint32_t width = (_width + divisor - 1) / divisor, height = (_height + divisor - 1) / divisor;
-    // Without the denoiser: no directions and none of the passes' targets
-    // (the mirror rays' alpha rides with what the pixel reflects).
+    // Without the denoiser: none of the passes' targets, and at full
+    // resolution no directions (the mirror rays' alpha rides with what the
+    // pixel reflects).
     for (Image *img : {&_rays, &_directions, &_normals, &_factor}) {
         const bool blocks = img == &_directions;
-        if (blocks && !denoise) {
-            continue;
+        if (blocks && !denoise && divisor == 1) {
+            continue;  // (per block the trace still stores its rays' directions)
         }
         *img = _dev.CreateImage(kFormat, blocks ? width : _width, blocks ? height : _height, 1, 1, storage,
                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
@@ -343,9 +344,7 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView
         DrawFullscreen(cmd, _trace, _traceLayout, scene, _traced.view, width, height, false,
                        VK_SHADER_STAGE_FRAGMENT_BIT, &params, sizeof(params));
         toRead(_traced);
-        if (denoise) {
-            stored(_directions);
-        }
+        stored(_directions);
     }
     if (denoise || !blocks) {
         toTarget(_resolved);

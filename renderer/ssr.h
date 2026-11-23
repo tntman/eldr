@@ -66,7 +66,7 @@ public:
     uint32_t Divisor() const { return _divisor; }
 
     // What mesh.frag writes (GENERAL layout; null until Prepare, the
-    // directions without the denoiser).
+    // directions also without the denoiser at full resolution).
     VkImageView Rays() const { return _rays.view; }
     VkImageView Directions() const { return _directions.view; }
     VkImageView Normals() const { return _normals.view; }

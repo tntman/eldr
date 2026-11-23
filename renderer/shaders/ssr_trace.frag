@@ -109,7 +109,6 @@ void main()
 void main()
 {
     // The rays go into their pixels' own texels, or their blocks'.
-    bool glossy = frame.ssr.z != 3.0;
     bool everyPixel = pc.blocks.w > 0.0, pixels = everyPixel || pc.blocks.z > 0.0;
     int which = max(int(pc.blocks.z) - 1, 0);
     ivec2 q = ivec2(gl_FragCoord.xy), px = everyPixel ? q : 2 * q + ivec2(which & 1, which >> 1);
@@ -132,7 +131,7 @@ void main()
     // Interleaved, each pixel has its own sequence of samples (every fourth frame's).
     vec2 noisePixel = pixels ? vec2(px) : gl_FragCoord.xy;
     vec3 l = reflect(-v, n);
-    if (glossy) {
+    if (frame.ssr.z != 3.0) {
         // As mesh.frag's denoised ray.
         float NoV = max(dot(n, v), 1e-4);
         vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
@@ -164,9 +163,7 @@ void main()
         imageStore(ssrDirections, px, direction);
     } else {
         outRay = ray;
-        if (glossy) {
-            imageStore(ssrDirections, q, direction);
-        }
+        imageStore(ssrDirections, q, direction);
     }
 }
 #endif
