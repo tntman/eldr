@@ -104,7 +104,7 @@ What Eldr does to start sooner:
 
 ## Sequences
 
-husk renders a shot in one process (`husk -f 1 -n 240`). Every frame is a film from its first sample: the same image as that frame rendered alone. Between frames Eldr keeps what stays the same:
+husk renders a shot in one process (`husk -f 1 -n 240`). Every frame is a film from its first sample, as a frame rendered alone is (only its noise pattern differs). Between frames Eldr keeps what stays the same:
 
 - Geometry, textures, levels of detail and pipelines stay on the GPU. Only prims with time samples sync again; a moving camera alone syncs nothing.
 - A deforming mesh (time-sampled points) uploads its new points. Its levels of detail for the next frame build on the CPU while the GPU renders the current one, so that frame starts at once. Deforming curves and points build theirs when the frame arrives.
