@@ -192,7 +192,8 @@ struct FrameTiming {
                        "stats_ms,stats_calls,map_ms,map_calls,alloc_ms,alloc_calls,isconverged_ms,isconverged_calls,"
                        "camsync_ms,camsync_calls,sync_ms,sync_calls,app_outside_eldr_ms,sync_wall_ms,mesh_topology_ms,"
                        "mesh_points_ms,mesh_instancer_ms,mesh_primvars_ms,mesh_skin_ms,mesh_shutter_ms,mesh_program_ms,"
-                       "mesh_flatten_ms,mesh_transforms_ms,mesh_joints_ms,mesh_share_ms,shutter_hits\n",
+                       "mesh_flatten_ms,mesh_transforms_ms,mesh_joints_ms,mesh_share_ms,shutter_hits,unmap_ms,"
+                       "presync_ms,scene_frame,batch_samples,batch_commit_ms,batch_read_ms,redices,redice_ms\n",
                        csv);
             auto *t = new FrameTiming;
             t->csv = csv;
@@ -208,6 +209,15 @@ struct FrameTiming {
     Clock::time_point start = Clock::now(), lastBegin = start, lastEnd = start;
     std::atomic<int64_t> fetchUs{0};
     int frame = 0;
+    // Offline executes that returned for a re-dice (no row of their own)
+    // since the last row, and the last one's return.
+    int redices = 0;
+    Clock::time_point rediceEnd = start;
+    void Redice()
+    {
+        ++redices;
+        rediceEnd = Clock::now();
+    }
 };
 
 } // namespace
@@ -240,6 +250,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     FrameTiming *const timing = FrameTiming::Get();
     const FrameTiming::Clock::time_point tBegin = FrameTiming::Clock::now();
     FrameTiming::Clock::time_point tCollect = tBegin, tRender = tBegin, tRendered = tBegin;
+    double batchCommitMs = 0.0, batchReadMs = 0.0;  // an offline batch: the commits between its samples, its readback
+    uint32_t batchSamples = 0;
 
     // Only the pass's render tags (purposes) are drawn; no tags: all.
     uint32_t tagMask = renderTags.empty() ? ~0u : 0u;
@@ -955,6 +967,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         static_cast<HdVkRenderDelegate *>(delegate)->KeepMotion();
     }
     if (resync && offline) {
+        if (timing) {
+            timing->Redice();
+        }
         return;
     }
     const bool firstFrame = std::all_of(_lastViewProj, _lastViewProj + 16, [](float v) { return v == 0.0f; });
@@ -989,6 +1004,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             vk->SetDicingView(dicing, redice);
             _redicing = redice;
             if (offline && redice) {
+                if (timing) {
+                    timing->Redice();
+                }
                 return;
             }
         }
@@ -1373,9 +1391,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
             const auto tRead = FrameTiming::Clock::now();
             _renderer->Read(out);
+            batchSamples = samples;
+            batchCommitMs = commitMs;
+            batchReadMs = FrameTiming::Ms(tRead, FrameTiming::Clock::now());
             if (vkr::TimingLevel() >= 3) {
                 std::fprintf(stderr, "HdVk batch: %u samples, render %.1f ms, commits between %.1f ms, read %.1f ms\n",
-                             samples, renderMs, commitMs, FrameTiming::Ms(tRead, FrameTiming::Clock::now()));
+                             samples, renderMs, commitMs, batchReadMs);
             }
         } else {
             _renderer->Render(_scene, frame, out);
@@ -1620,7 +1641,19 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             std::fprintf(timing->csv, ",%.3f", calls.ns[e].exchange(0) / 1e6);
             calls.calls[e] = 0;
         }
-        std::fprintf(timing->csv, ",%lld\n", (long long)HdVkTakeShutterHits());
+        // An offline sequence's change of frame: the app reads the buffers
+        // and writes its image (until its last Unmap), then changes the
+        // time, up to the first prim sync (the stage's and Hydra's invalidation).
+        const auto ns = [](FrameTiming::Clock::time_point t) {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+        };
+        const int64_t lastEnd = ns(timing->lastEnd), unmapped = std::max(calls.lastUnmap.exchange(0), lastEnd);
+        std::fprintf(timing->csv, ",%lld,%.3f,%.3f,%g,%u,%.3f,%.3f,%d,%.3f\n", (long long)HdVkTakeShutterHits(),
+                     (unmapped - lastEnd) / 1e6,
+                     syncEnd > syncBegin ? double(std::max<int64_t>(syncBegin - unmapped, 0)) / 1e6 : 0.0, sceneFrame,
+                     batchSamples, batchCommitMs, batchReadMs, timing->redices,
+                     timing->redices ? T::Ms(timing->lastEnd, timing->rediceEnd) : 0.0);
+        timing->redices = 0;
         std::fflush(timing->csv);
         timing->lastBegin = tBegin;
         timing->lastEnd = tEnd;

@@ -24,6 +24,9 @@ struct HdVkCallTimes {
     // The wall-clock span of the kSync calls since the last execute (ns on
     // steady_clock): the share of the app's time its prim syncs take.
     std::atomic<int64_t> syncBegin{INT64_MAX}, syncEnd{0};
+    // The app's last render buffer Unmap (ns on steady_clock; 0: none): where
+    // an offline frame's image write ends and its change of frame begins.
+    std::atomic<int64_t> lastUnmap{0};
 
     static bool On()
     {
