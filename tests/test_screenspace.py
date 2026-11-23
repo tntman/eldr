@@ -341,5 +341,17 @@ print("interleaved SSR rays: %d floor pixels (of a quarter) differ in a frame; f
 expect(changed > 100, "eldr:ssrInterleave traces a quarter of the glossy rays a frame")
 expect(abs(converged[0] - converged[1]) < 1.5 and apart < 2.5, "eldr:ssrInterleave's film stays close to a ray per pixel's")
 
+# The default SSR's mirror rays trace in a pass after shading; HDVK_SSR_INLINE=1
+# traces them in the shading pass itself: the same image.
+stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "reflections.usda"))
+os.environ["HDVK_SSR_INLINE"] = "1"
+inline = render(stage, bright)
+os.environ["HDVK_SSR_INLINE"] = "0"
+passed = render(stage, bright)
+apart = difference(passed, inline, 0, 0, SIZE, SIZE)
+worst = max(abs(passed.pixelColor(x, y).green() - inline.pixelColor(x, y).green()) for y in range(SIZE) for x in range(SIZE))
+print("SSR's mirror rays in their own pass: %.3f from the shading pass's on average, %d at most" % (apart, worst))
+expect(apart < 0.1 and worst <= 8, "SSR's mirror rays look the same traced after the shading pass")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

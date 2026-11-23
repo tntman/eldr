@@ -673,6 +673,9 @@ Renderer::~Renderer()
         const double n = double(_totals.frames);
         std::fprintf(stderr, "HdVk film totals: %u samples, per sample: cpu %.2f ms (of it waiting for the GPU %.2f), gpu %.2f ms\n",
                      _totals.frames, _totals.cpuMs / n, _totals.waitMs / n, _totals.gpuMs / n);
+        const Device::MemoryStats memory = _dev.Memory();
+        std::fprintf(stderr, "HdVk film memory: GPU %.1f MB now, %.1f MB at its peak\n", double(memory.deviceLocal) / 1048576.0,
+                     double(memory.peakDeviceLocal) / 1048576.0);
         for (const auto &[name, ms] : _totals.gpu) {
             std::fprintf(stderr, "HdVk film gpu: %-28s %8.3f ms  %5.1f%%\n", name.c_str(), ms / n, 100.0 * ms / std::max(_totals.gpuMs, 1e-9));
         }
@@ -2088,6 +2091,9 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
                                                 {VK_NULL_HANDLE, _ssr.Normals(), VK_IMAGE_LAYOUT_GENERAL},
                                                 {VK_NULL_HANDLE, _ssr.Factor(), VK_IMAGE_LAYOUT_GENERAL}};
     for (uint32_t i = 0; i < 4 && _ssr.Rays(); ++i) {
+        if (!ssrImages[i].imageView) {
+            continue;  // no directions without the denoiser
+        }
         write(72 + i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &ssrImages[i]);
     }
     const VkDescriptorImageInfo translucentDepth{
@@ -3690,23 +3696,33 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool ssrHitFilter = frame.ssr && frame.ssrHitFilter && frame.postProcess && frame.depthPrepass;
     bool ssrInterleaved = false;
     _taa.SetHistoryMips(ssrHitFilter);
+    // The opaque surfaces' rays trace in a pass after the shading pass
+    // (SsrDenoise: what they need is stored per pixel), unless traced
+    // reflections replace SSR where they apply (mesh.frag then traces what
+    // is left itself, as it does for glass and coats). Its targets exist
+    // only while SSR is on and a drawn material can reflect.
+    // HDVK_SSR_INLINE=1: the mirror rays in mesh.frag, as before (A/B).
+    const char *ssrInlineEnv = std::getenv("HDVK_SSR_INLINE");
+    const bool ssrInline = ssrInlineEnv && *ssrInlineEnv == '1';
+    const bool ssrPass = frame.ssr && frame.postProcess && frame.depthPrepass && gpu.reflective && gpu.drawCount > 0 &&
+                         !(tracedReflections && _rt) && (frame.ssrDenoise || !ssrInline);
+    if (!ssrPass) {
+        _ssr.Release();
+    }
     if (frame.ssr && frame.postProcess && frame.depthPrepass && _historyValid) {
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
         fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
-        // Denoised: the shading pass stores what its rays need and
-        // SsrDenoise traces them after it (traced reflections replace SSR
-        // where they apply: no denoiser then).
+        // Mirror rays (5), or denoised (eldr:ssrDenoise: 1).
         // eldr:movingSsrResolution: while moving (and the ramp after, never
-        // in the film) one ray per 2 x 2 block, traced after the shading
-        // pass (SsrDenoise; 2 denoised, 3 the mirror rays).
+        // in the film) one ray per 2 x 2 block (2 denoised, 3 the mirror rays).
         // eldr:ssrInterleave: else, denoised, the rougher surfaces trace
         // one pixel of each block a frame, in turn (4).
         const bool blocks = (moving || ramp) && !film && frame.movingSsrResolution > 1;
-        if ((frame.ssrDenoise || blocks) && !(tracedReflections && _rt && frame.depthPrepass)) {
-            ssrInterleaved = frame.ssrInterleave && !blocks;
-            fd.ssr[2] = ssrInterleaved ? 4.0f : !blocks ? 1.0f : frame.ssrDenoise ? 2.0f : 3.0f;
-            _ssr.Prepare(blocks ? 2 : 1, _setLayout);
+        if (ssrPass) {
+            ssrInterleaved = frame.ssrDenoise && frame.ssrInterleave && !blocks;
+            fd.ssr[2] = blocks ? (frame.ssrDenoise ? 2.0f : 3.0f) : !frame.ssrDenoise ? 5.0f : ssrInterleaved ? 4.0f : 1.0f;
+            _ssr.Prepare(blocks ? 2 : 1, _setLayout, frame.ssrDenoise);
         }
     }
 
@@ -4934,7 +4950,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (ssrDenoise) {
         _ssr.Resolve(_cmd, _set, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
                      frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f, _aovs.SplitsView(), splits,
-                     fd.lightPath[1], fd.ssr[2] != 3.0f,
+                     fd.lightPath[1],
                      ssrInterleaved ? 1 + ((0x9C >> (2 * (sobolIndex % 4))) & 3) : 0);  // pixels 0, 3, 1, 2 in turn
         pass("ssrDenoise");
     }

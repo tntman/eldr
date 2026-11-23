@@ -13,6 +13,12 @@
 // other pixels their neighbours' rays.
 // Per block (Frame::movingSsrResolution): the ray of each block's first
 // pixel, into the block's texel (radiance and pdf: the colour output).
+// Built with ADD: the mirror rays over the pixels (frame.ssr.z 5, the
+// default SSR without the denoiser), drawn over the scene's colour, to
+// which each pixel's reflection is added at once: the dome's share of it
+// as direct light (the light splits and the light path intensities), the
+// rest as indirect glossy. A shader of its own, so neither build carries
+// the other's code.
 
 #include "frame.glsl"
 
@@ -20,9 +26,16 @@ layout(set = 0, binding = 11) uniform sampler2D ambientOcclusion;
 layout(set = 0, binding = 12) uniform sampler2D previousColor;
 layout(set = 0, binding = 76) uniform sampler2DArray previousSplits;
 layout(set = 0, binding = 13) uniform sampler2D sceneDepth;
+#ifdef ADD
+layout(set = 0, binding = 72, rgba16f) uniform readonly image2D ssrSurface;  // the reflection without a hit, GGX alpha
+// The light splits (mesh.frag's lightSplits): layer 2 the direct glossy light, 3 the indirect, from 11 the light groups'.
+layout(set = 0, binding = 67, rgba16f) uniform image2DArray lightSplits;
+#else
 layout(set = 0, binding = 72, rgba16f) uniform image2D ssrSurface;     // the reflection without a hit, GGX alpha
 layout(set = 0, binding = 73, rgba16f) uniform image2D ssrDirections;  // per block
-layout(set = 0, binding = 74, rgba16f) uniform readonly image2D ssrNormals;       // normal, geometric normal (octahedral)
+#endif
+layout(set = 0, binding = 74, rgba16f) uniform readonly image2D ssrNormals;       // normal (octahedral); geometric normal,
+                                                                                  // or the dome's share (mirror rays)
 layout(set = 0, binding = 75, rgba16f) uniform readonly image2D ssrFactor;        // a > 0: reflects
 
 #include "ssr_trace.glsl"
@@ -62,9 +75,41 @@ vec3 OctDecode(vec2 e)
     return normalize(n);
 }
 
+#ifdef ADD
+void main()
+{
+    ivec2 px = ivec2(gl_FragCoord.xy);
+    vec4 f = imageLoad(ssrFactor, px);
+    if (f.a <= 0.0) {
+        discard;  // nothing reflects here: nothing to add
+    }
+    vec2 ndc = (vec2(px) + 0.5) / frame.viewport.xy * 2.0 - 1.0;
+    vec3 p = Unproject(vec3(ndc, texelFetch(sceneDepth, px, 0).r * 2.0 - 1.0));
+    vec4 surface = imageLoad(ssrSurface, px), normals = imageLoad(ssrNormals, px);
+    vec4 hit;
+    float w = TraceReflection(p, reflect(-ViewDirection(p), OctDecode(normals.xy)), 2.0 * surface.a, hit);
+    // What mesh.frag's own mirror ray adds: the weight times what the
+    // pixel reflects, the hit over the probe's or dome's light.
+    vec3 total = f.rgb * mix(surface.rgb, hit.rgb + (1.0 - hit.a) * surface.rgb, w);
+    vec3 dome = f.rgb * normals.z * surface.rgb * (1.0 - w * hit.a);
+    if (pc.splits.x != 0.0) {
+        ivec3 at = ivec3(px, 2);
+        imageStore(lightSplits, at, imageLoad(lightSplits, at) + vec4(dome, 0.0));
+        at.z = 3;
+        imageStore(lightSplits, at, imageLoad(lightSplits, at) + vec4(total - dome, 0.0));
+        at.z = 11 + int(frame.aovs.z) - 1;  // the dome's light group
+        if (frame.aovs.z != 0u && at.z < imageSize(lightSplits).z) {
+            imageStore(lightSplits, at, imageLoad(lightSplits, at) + vec4(dome, 0.0));
+        }
+    }
+    vec2 intensity = frame.lightPath.z != 0.0 ? frame.lightPath.xy : vec2(1.0);
+    outRay = vec4((f.a - 1.0) * (intensity.x * dome + intensity.y * (total - dome)), 0.0);
+}
+#else
 void main()
 {
     // The rays go into their pixels' own texels, or their blocks'.
+    bool glossy = frame.ssr.z != 3.0;
     bool everyPixel = pc.blocks.w > 0.0, pixels = everyPixel || pc.blocks.z > 0.0;
     int which = max(int(pc.blocks.z) - 1, 0);
     ivec2 q = ivec2(gl_FragCoord.xy), px = everyPixel ? q : 2 * q + ivec2(which & 1, which >> 1);
@@ -87,7 +132,7 @@ void main()
     // Interleaved, each pixel has its own sequence of samples (every fourth frame's).
     vec2 noisePixel = pixels ? vec2(px) : gl_FragCoord.xy;
     vec3 l = reflect(-v, n);
-    if (frame.ssr.z < 3.0) {
+    if (glossy) {
         // As mesh.frag's denoised ray.
         float NoV = max(dot(n, v), 1e-4);
         vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
@@ -119,6 +164,9 @@ void main()
         imageStore(ssrDirections, px, direction);
     } else {
         outRay = ray;
-        imageStore(ssrDirections, q, direction);
+        if (glossy) {
+            imageStore(ssrDirections, q, direction);
+        }
     }
 }
+#endif

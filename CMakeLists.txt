@@ -67,19 +67,25 @@ endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
 # glslc -O0, then spirv-opt -O (the same passes as glslc -O, the same
 # SPIR-V) with a higher id bound: inlining everything into rt_pixels.rgen
-# burns ~4.2M ids, past glslc's fixed 0x3FFFFF, where its optimizer
+# burns millions of ids, past glslc's fixed 0x3FFFFF, where its optimizer
 # crashes. --compact-ids keeps the result's bound small (~66k).
+# cmake/spv_inc.cmake runs it: rt_pixels.rgen takes spirv-opt about 9 GB and
+# two minutes, and it sometimes crashes there without a message, so the
+# script names a failure and tries again; one such step at a time (the
+# pool), not six beside the compiler's jobs.
 get_filename_component(vulkan_bin ${Vulkan_GLSLC_EXECUTABLE} DIRECTORY)
 find_program(SPIRV_OPT spirv-opt HINTS ${vulkan_bin} REQUIRED)
+set_property(GLOBAL APPEND PROPERTY JOB_POOLS rt_shaders=1)
 foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt_subsurface.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit
         rt_shadow.rahit)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc -MD -MF ${spv}.d -MT ${spv} --target-env=vulkan1.3 -O0 -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
                 -o ${spv}.O0.spv ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
-        COMMAND ${SPIRV_OPT} -O --max-id-bound=16777215 --strip-debug --compact-ids ${spv}.O0.spv -o ${spv}.spv
-        COMMAND ${CMAKE_COMMAND} -DSPV=${spv}.spv -DINC=${spv} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/spv_inc.cmake
+        COMMAND ${CMAKE_COMMAND} -DOPT=${SPIRV_OPT} -DIN=${spv}.O0.spv -DSPV=${spv}.spv -DINC=${spv}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/spv_inc.cmake
         DEPFILE ${spv}.d
+        JOB_POOL rt_shaders
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
                 renderer/shaders/rt_shade.glsl renderer/shaders/rt_evaluate.glsl renderer/shaders/displace.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl renderer/shaders/volume.glsl
@@ -123,6 +129,13 @@ foreach(pass 0 1 2)  # denoised SSR (ssr.cpp): its three passes
         DEPENDS renderer/shaders/ssr_denoise.frag)
     list(APPEND shader_incs ${spv})
 endforeach()
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssr_trace_add.frag.inc)  # SSR's mirror rays, added to the colour (ssr.cpp)
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DADD -o ${spv}
+            ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/ssr_trace.frag
+    DEPFILE ${spv}.d
+    DEPENDS renderer/shaders/ssr_trace.frag renderer/shaders/ssr_trace.glsl renderer/shaders/frame.glsl)
+list(APPEND shader_incs ${spv})
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssgi_bitmask.frag.inc)  # SSGI with a visibility bitmask
 add_custom_command(OUTPUT ${spv}
     COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DSSGI -DBITMASK -o ${spv}
