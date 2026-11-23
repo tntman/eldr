@@ -252,6 +252,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     FrameTiming::Clock::time_point tCollect = tBegin, tRender = tBegin, tRendered = tBegin;
     double batchCommitMs = 0.0, batchReadMs = 0.0;  // an offline batch: the commits between its samples, its readback
     uint32_t batchSamples = 0;
+    // The app's last Unmap before this execute (the pass's own follow).
+    const int64_t appUnmap = timing ? HdVkCallTimes::Get().lastUnmap.exchange(0) : 0;
 
     // Only the pass's render tags (purposes) are drawn; no tags: all.
     uint32_t tagMask = renderTags.empty() ? ~0u : 0u;
@@ -882,6 +884,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Nobody toggles a feature in a batch render: no prewarm (its compiles
     // only made the teardown wait, seconds).
     frame.pipelinePrewarm = frame.pipelinePrewarm && !offline;
+    // An offline frame is a film from its first sample. A sequence's next
+    // frame (husk -n, usdrecord --frames) is a change like a viewport edit:
+    // without this it rendered as a moving frame (TAA at the moving render
+    // scale; under motion blur one sample, converged at once) while the
+    // first frame got the film. HDVK_OFFLINE_MOVING=1 (A/B): as before.
+    static const bool offlineMoving = TfGetenvBool("HDVK_OFFLINE_MOVING", false);
+    frame.filmRestart = frame.filmRestart || (offline && !offlineMoving);
     // Houdini's viewport colour-corrects every delegate's colour itself (its
     // OCIO view, gamma, LUT): with eldr:productLinear it gets the EXR's
     // linear beauty, as from Karma, not Eldr's tonemap, bloom or auto exposure.
@@ -1647,7 +1656,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         const auto ns = [](FrameTiming::Clock::time_point t) {
             return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
         };
-        const int64_t lastEnd = ns(timing->lastEnd), unmapped = std::max(calls.lastUnmap.exchange(0), lastEnd);
+        const int64_t lastEnd = ns(timing->lastEnd), unmapped = std::max(appUnmap, lastEnd);
+        calls.lastUnmap = 0;  // the pass's own
         std::fprintf(timing->csv, ",%lld,%.3f,%.3f,%g,%u,%.3f,%.3f,%d,%.3f\n", (long long)HdVkTakeShutterHits(),
                      (unmapped - lastEnd) / 1e6,
                      syncEnd > syncBegin ? double(std::max<int64_t>(syncBegin - unmapped, 0)) / 1e6 : 0.0, sceneFrame,
