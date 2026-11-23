@@ -329,7 +329,7 @@ expect(grain < 3, "denoised SSR below full resolution is smooth without TAA")
 # Interleaved glossy SSR rays (eldr:ssrInterleave): each film sample traces
 # one pixel in four of the glossy floor (roughness 0.25) and the denoiser
 # fills in the rest from the neighbours' rays, so a frame differs but the
-# film stays close (its rough reflections a little crisper).
+# film stays close.
 frames = [render(stage, {**glossy, "eldr:ssrInterleave": on}) for on in (False, True)]
 films = [render(stage, {**glossy, "eldr:taa": True, "eldr:ssrInterleave": on}, frames=70) for on in (False, True)]
 changed = sum(frames[0].pixelColor(x, y) != frames[1].pixelColor(x, y)
@@ -339,7 +339,7 @@ converged = [mean(f, *floor) for f in films]
 print("interleaved SSR rays: %d floor pixels (of a quarter) differ in a frame; films %.2f off, %.2f on, %.2f apart" % (
     changed, converged[0], converged[1], apart))
 expect(changed > 100, "eldr:ssrInterleave traces a quarter of the glossy rays a frame")
-expect(abs(converged[0] - converged[1]) < 1.5 and apart < 2.5, "eldr:ssrInterleave's film stays close to a ray per pixel's")
+expect(abs(converged[0] - converged[1]) < 0.5 and apart < 1.0, "eldr:ssrInterleave's film stays close to a ray per pixel's")
 
 # The default SSR's mirror rays trace in a pass after shading; HDVK_SSR_INLINE=1
 # traces them in the shading pass itself: the same image.
@@ -349,9 +349,10 @@ inline = render(stage, bright)
 os.environ["HDVK_SSR_INLINE"] = "0"
 passed = render(stage, bright)
 apart = difference(passed, inline, 0, 0, SIZE, SIZE)
-worst = max(abs(passed.pixelColor(x, y).green() - inline.pixelColor(x, y).green()) for y in range(SIZE) for x in range(SIZE))
-print("SSR's mirror rays in their own pass: %.3f from the shading pass's on average, %d at most" % (apart, worst))
-expect(apart < 0.1 and worst <= 8, "SSR's mirror rays look the same traced after the shading pass")
+# (Single rays on the chrome ball's grazing underside hit or miss by rounding: a few pixels.)
+far = sum(abs(passed.pixelColor(x, y).green() - inline.pixelColor(x, y).green()) > 8 for y in range(SIZE) for x in range(SIZE))
+print("SSR's mirror rays in their own pass: %.3f from the shading pass's on average, %d pixels more than 8 apart" % (apart, far))
+expect(apart < 0.1 and far < 0.002 * SIZE * SIZE, "SSR's mirror rays look the same traced after the shading pass")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

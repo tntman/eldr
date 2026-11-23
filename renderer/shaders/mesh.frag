@@ -1155,10 +1155,14 @@ void main()
     // SsrDenoise's mirror rays (frame.ssr.z 3, 5) add their reflection after
     // this pass: only where nothing after here reshapes the colour (toon
     // bands) or takes part of it away (refraction); those pixels trace here.
-    float toonSoftness;
+    // (ToonShade's own test of the bands, brdf.glsl.)
+    bool toonBands = Feature(kFeatureToon) && frame.styles.y != 0u;
+#ifdef LAYERS
+    toonBands = toonBands || (layers.toonBands > 0.0 && (frame.styles.x & kStyleToon) != 0u);
+#endif
     const bool glossy = frame.ssr.z != 3.0 && frame.ssr.z != 5.0;
     if (frame.ssr.z > 0.0 && ssrWeight > 0.0 && RtOpaque() &&
-        (glossy || (gRefracted <= 0.0 && ToonBands(toonSoftness) <= 0.0))) {
+        (glossy || (gRefracted <= 0.0 && !toonBands))) {
         // SsrDenoise's: ssr_trace.frag traces after this pass and its
         // reflection, times FssEss and the weight, is added then.
         // Denoised (frame.ssr.z 1, 2, 4) a GGX-sampled ray, glossy up to

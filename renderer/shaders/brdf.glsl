@@ -750,25 +750,15 @@ vec3 Toon(vec3 color, vec3 emissive, vec3 albedo, float bands, float softness)
 // Last, before cutouts discard (fwidth needs the whole quad): toon bands
 // from the material's eldr:toonBands (hydra/material.cpp), else the
 // frame's for every material. `albedo`: diffuse colour plus F0.
-// The pixel's toon bands (0: none) and their softness.
-float ToonBands(out float softness)
+vec3 ToonShade(vec3 color, vec3 emissive, vec3 albedo)
 {
-    float bands = Feature(kFeatureToon) ? float(frame.styles.y) : 0.0;
-    softness = 0.05;
+    float bands = Feature(kFeatureToon) ? float(frame.styles.y) : 0.0, softness = 0.05;
 #ifdef LAYERS
+    albedo = layers.albedo;  // sheen and coats would make bands uneven
     if (layers.toonBands > 0.0 && (frame.styles.x & kStyleToon) != 0u) {
         bands = layers.toonBands;
         softness = layers.toonSoftness;
     }
-#endif
-    return bands;
-}
-
-vec3 ToonShade(vec3 color, vec3 emissive, vec3 albedo)
-{
-    float softness, bands = ToonBands(softness);
-#ifdef LAYERS
-    albedo = layers.albedo;  // sheen and coats would make bands uneven
 #endif
     return bands > 0.0 ? Toon(color, emissive, albedo, bands, softness) : color;
 }

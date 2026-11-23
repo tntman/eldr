@@ -640,8 +640,9 @@ public:
         // one pixel of every 2 x 2 block, another each time; the denoiser's
         // spatial pass gives the others their nearest traced neighbours'
         // rays (ssr.h). Smoother surfaces trace every pixel. Off: every
-        // pixel, every frame. Slightly crisper rough reflections than off
-        // (fewer rays per estimate), so off by default.
+        // pixel, every frame. Geometry finer than a block reflects
+        // slightly brighter than off (no neighbour on its surface: the
+        // probe's or dome's light), so off by default.
         bool ssrInterleave = false;
         // Jittered light shapes under the film (EEVEE's jittered soft
         // shadows): each sample renders the shadow maps from a point of the
