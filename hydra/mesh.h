@@ -82,7 +82,9 @@ bool HdVkMotionBlur(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 // Blur), continued linearly as the camera's and the transforms' are. Empty
 // when they don't move through it or when the point count isn't
 // `pointCount` there.
-VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const &id, size_t pointCount);
+// `ahead`: as a sync that many frames later computes them.
+VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const &id, size_t pointCount,
+                                   float ahead = 0.0f);
 
 // Subdivision surface meshes in the process: without any, a new dicing
 // view (eldr:screenDicing) has nothing to re-dice.
@@ -101,12 +103,24 @@ public:
     // Hydra updates the tag (purpose) outside Sync.
     void UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam) override;
 
+    // A sequence's next frame, while this one renders (an offline render
+    // pass, during its execute: nothing else may touch the scene): the
+    // meshes whose points changed since the last call are flattened as
+    // they will be `frames` later, and the scene starts their levels of
+    // detail (vkr::Scene::BuildLodsAhead), which the next frame otherwise
+    // builds and waits for before its first sample. Reads the points, their
+    // shutter samples and authored normals at that time; a mesh that turns
+    // out otherwise next frame (another topology, uvs, refinement) builds
+    // its own as ever.
+    static void BuildLodsAhead(vkr::Scene &scene, float frames);
+
 protected:
     HdDirtyBits _PropagateDirtyBits(HdDirtyBits bits) const override { return bits; }
     void _InitRepr(TfToken const &, HdDirtyBits *) override {}
 
 private:
     void _Flatten();
+    void _BuildLodsAhead(HdSceneDelegate *sceneDelegate, float frames);
     void _SplitSubsets();
     void _SyncSubsets(HdSceneDelegate *sceneDelegate);
     void _UpdateJoints();

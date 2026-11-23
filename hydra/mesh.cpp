@@ -10,7 +10,9 @@
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/tf/stringUtils.h"
+#include "pxr/base/work/loops.h"
 #include "pxr/imaging/hd/meshUtil.h"
+#include "pxr/imaging/hd/primvarsSchema.h"
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/smoothNormals.h"
@@ -20,7 +22,9 @@
 
 #include <algorithm>
 #include <array>
+#include <mutex>
 #include <optional>
+#include <unordered_map>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -198,6 +202,13 @@ HdVkMesh::HdVkMesh(SdfPath const &id, vkr::Scene *scene)
 
 namespace {
 std::atomic<int> subdivisionMeshes{0};
+// Meshes whose points changed since the last HdVkMesh::BuildLodsAhead, with
+// the scene delegate that synced them.
+// ponytail: one set for the process (BuildLodsAhead takes its scene's and
+// drops the rest); a set per render delegate when two offline ones share one.
+// Meshes only: deforming curves and points build theirs each frame.
+std::mutex deformedMutex;
+std::unordered_map<HdVkMesh *, HdSceneDelegate *> deformed;
 }
 
 int HdVkSubdivisionMeshes()
@@ -207,6 +218,10 @@ int HdVkSubdivisionMeshes()
 
 HdVkMesh::~HdVkMesh()
 {
+    {
+        std::lock_guard<std::mutex> lock(deformedMutex);
+        deformed.erase(this);
+    }
     subdivisionMeshes -= _subdivisionCounted ? 1 : 0;
     _scene->RemoveMesh(_mesh);
     for (vkr::Mesh *subset : _subsetMeshes) {
@@ -305,6 +320,10 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             _animated = _animated || !_points.empty();
             _points = std::move(points);
             geometryDirty = true;
+            if (_animated) {
+                std::lock_guard<std::mutex> lock(deformedMutex);
+                deformed[this] = sceneDelegate;
+            }
         }
     }
     // Instancers are synced by the rprims that use them (as in hdEmbree);
@@ -759,7 +778,7 @@ bool HdVkMesh::_Skinned() const
     return _influencesPerPoint > 0 && !_influences.empty() && !_skinningXforms.empty();
 }
 
-VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const &id, size_t pointCount)
+VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const &id, size_t pointCount, float ahead)
 {
     auto *vk = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
     float open, close;
@@ -769,12 +788,12 @@ VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const
         return {};
     }
     HdTimeSampleArray<VtValue, 4> boxed;
-    sceneDelegate->SamplePrimvar(id, HdTokens->points, open, close, &boxed);
+    sceneDelegate->SamplePrimvar(id, HdTokens->points, ahead + open, ahead + close, &boxed);
     HdTimeSampleArray<VtVec3fArray, 4> samples;
     if (boxed.count < 2 || !samples.UnboxFrom(boxed)) {
         return {};
     }
-    const VtVec3fArray a = samples.Resample(open), b = samples.Resample(close);
+    const VtVec3fArray a = samples.Resample(ahead + open), b = samples.Resample(ahead + close);
     if (a.size() != pointCount || b.size() != a.size() || a == b) {
         return {};
     }
@@ -886,6 +905,85 @@ void HdVkMesh::_UpdateJoints()
     for (size_t s = 0; s < _skinningXforms.size(); ++s) {
         const GfMatrix4f joint = geomBind * _skinningXforms[s] * skelToPrim;
         std::copy(joint.data(), joint.data() + 16, m.skinningTransforms.data() + s * 16);
+    }
+}
+
+void HdVkMesh::BuildLodsAhead(vkr::Scene &scene, float frames)
+{
+    std::vector<std::pair<HdVkMesh *, HdSceneDelegate *>> meshes;
+    {
+        std::lock_guard<std::mutex> lock(deformedMutex);
+        meshes.assign(deformed.begin(), deformed.end());
+        deformed.clear();
+    }
+    scene.DropLodsAhead();
+    WorkParallelForN(meshes.size(), [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            if (meshes[i].first->_scene == &scene) {
+                meshes[i].first->_BuildLodsAhead(meshes[i].second, frames);
+            }
+        }
+    }, 1);
+}
+
+// Flattens into meshes of its own what Sync would `frames` later if only
+// the points, their shutter samples and the authored normals changed.
+void HdVkMesh::_BuildLodsAhead(HdSceneDelegate *sceneDelegate, float frames)
+{
+    const HdSceneIndexBaseRefPtr scene = sceneDelegate->GetRenderIndex().GetTerminalSceneIndex();
+    if (!scene || _Skinned() || _points.empty()) {
+        return;
+    }
+    const SdfPath &id = GetId();
+    const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(scene->GetPrim(id).dataSource);
+    // A primvar as Sync's Get will return it then.
+    auto later = [&](TfToken const &name) {
+        const HdSampledDataSourceHandle value = primvars.GetPrimvar(name).GetPrimvarValue();
+        return value ? value->GetValue(frames) : VtValue();
+    };
+    const VtValue pointsThen = later(HdTokens->points);
+    if (!pointsThen.IsHolding<VtVec3fArray>() || pointsThen.UncheckedGet<VtVec3fArray>().size() != _points.size()) {
+        return;
+    }
+    VtVec3fArray points = pointsThen.UncheckedGet<VtVec3fArray>();
+    VtVec3fArray velocities = HdVkShutterVelocities(sceneDelegate, id, points.size(), frames);
+    VtValue normals = _normals.IsEmpty() ? VtValue() : later(HdTokens->normals);
+    if (normals.IsEmpty()) {
+        normals = _normals;
+    }
+    vkr::Mesh ahead;
+    std::vector<vkr::Mesh> aheadSubsets(_subsetMeshes.size());
+    std::vector<vkr::Mesh *> subsets;
+    for (vkr::Mesh &subset : aheadSubsets) {
+        subsets.push_back(&subset);
+    }
+    // The flatten of Sync, with these in place of the mesh's own.
+    vkr::Mesh *const mesh = _mesh;
+    const auto exchange = [&] {
+        std::swap(_points, points);
+        std::swap(_velocities, velocities);
+        std::swap(_normals, normals);
+        std::swap(_subsetMeshes, subsets);
+    };
+    exchange();
+    _mesh = &ahead;
+    bool flattened = false;
+    try {
+        if (!_FlattenRefined()) {
+            _Flatten();
+            _SplitSubsets();
+        }
+        flattened = true;
+    } catch (const std::exception &) {  // out of memory: the mesh gets its own back all the same
+    }
+    _mesh = mesh;
+    exchange();
+    if (!flattened) {
+        return;
+    }
+    _scene->BuildLodsAhead(ahead);
+    for (vkr::Mesh &subset : aheadSubsets) {
+        _scene->BuildLodsAhead(subset);
     }
 }
 

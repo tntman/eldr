@@ -38,6 +38,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <future>
 #include <map>
 #include <mutex>
 #include <set>
@@ -1340,12 +1341,51 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         _lastDeferred = frame.deferReadback;
         _lastReadback = readback;
         _lastDepthConstants = depthConstants;
+        // A sequence (husk -n, usdrecord --frames): while this frame waits
+        // for its levels of detail and renders, the CPU starts the next
+        // frame's for the meshes that deform (HdVkMesh::BuildLodsAhead),
+        // which that frame otherwise builds and waits for before its first
+        // sample. From the second frame on, by the step between the
+        // frames. It reads the scene: joined before this execute returns
+        // (the future's destructor). HDVK_NO_LODS_AHEAD=1 (A/B): none.
+        std::future<void> ahead;
+        if (offline && (!_sequenceFrame || *_sequenceFrame != sceneFrame)) {
+            _sequenceStep = _sequenceFrame ? sceneFrame - *_sequenceFrame : 0.0;
+            _sequenceFrame = sceneFrame;
+            // And its samples come in one batch when the frame before
+            // converged (no time limit cut it short), as long as that one
+            // took and a quarter, at most ten of the setting's batches:
+            // husk waits about 0.1 s after every execute that has not
+            // converged (7-9% of a frame at 1 s batches). The first frame
+            // keeps the setting's updates. HDVK_NO_SEQUENCE_BATCH=1 (A/B): all do.
+            static const bool plain = TfGetenvBool("HDVK_NO_SEQUENCE_BATCH", false);
+            _sequenceBatch = plain ? 0.0 : std::min(1.25 * _sequenceSeconds, 10.0 * double(batchSeconds));
+            _sequenceSeconds = 0.0;
+            _sequenceBegan = FrameTiming::Clock::now();
+            static const bool off = TfGetenvBool("HDVK_NO_LODS_AHEAD", false);
+            if (_sequenceStep != 0.0 && !off) {
+                ahead = std::async(std::launch::async, [this, step = float(_sequenceStep)] {
+                    const auto start = FrameTiming::Clock::now();
+                    HdVkMesh::BuildLodsAhead(_scene, step);
+                    if (vkr::TimingLevel() >= 3) {
+                        std::fprintf(stderr, "HdVk levels of detail ahead: flattened in %.0f ms, %u taken so far\n",
+                                     FrameTiming::Ms(start, FrameTiming::Clock::now()), _scene.LodsAheadTaken());
+                    }
+                });
+            }
+        }
         // Offline, levels of detail that arrive mid-frame start the film
         // over: the frame waits for them (they build on other threads)
         // and starts with them.
         if (offline && _scene.LodsPending()) {
+            const auto waitStart = FrameTiming::Clock::now();
             _scene.WaitForLods();
+            const auto waited = FrameTiming::Clock::now();
             _scene.Commit(true);
+            if (vkr::TimingLevel() >= 3) {
+                std::fprintf(stderr, "HdVk levels of detail: waited %.0f ms, stored in %.0f ms\n",
+                             FrameTiming::Ms(waitStart, waited), FrameTiming::Ms(waited, FrameTiming::Clock::now()));
+            }
         }
         tRender = FrameTiming::Clock::now();
         if (tiled) {
@@ -1380,7 +1420,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             vkr::Renderer::Targets sample = out;
             sample.readback = false;
             const auto until = tRender + std::chrono::duration_cast<FrameTiming::Clock::duration>(
-                                             std::chrono::duration<double>(batchSeconds));
+                                             std::chrono::duration<double>(std::max(double(batchSeconds), _sequenceBatch)));
             double renderMs = 0.0, commitMs = 0.0;  // HDVK_TIMING=3: the batch's samples and the commits between them
             uint32_t samples = 0;
             for (;;) {
@@ -1399,6 +1439,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 commitMs += FrameTiming::Ms(t1, FrameTiming::Clock::now());
             }
             const auto tRead = FrameTiming::Clock::now();
+            if (_renderer->IsConverged() && !_scene.LodsPending()) {
+                _sequenceSeconds = std::chrono::duration<double>(tRead - _sequenceBegan).count();
+            }
             _renderer->Read(out);
             batchSamples = samples;
             batchCommitMs = commitMs;

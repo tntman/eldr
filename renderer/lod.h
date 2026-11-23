@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -28,11 +29,14 @@ struct LodLevel {
 // skin weights differ, 0..1; collapsing a vertex next to one that differs
 // by d counts as moving the surface d times their distance (what a joint
 // between them bent by a radian moves; the rest pose hides where it bends).
+// `stop` (optional), once set, ends the build early with no levels: nobody
+// wants them any more.
 // ponytail: vertices on borders and attribute seams (an edge one triangle
 // uses) never move, so meshes cut into many uv islands simplify little;
 // welding seams by position (meshoptimizer's wedges) lifts that.
 std::vector<LodLevel> BuildLods(const float *vertices, size_t stride, size_t vertexCount,
                                 const std::vector<uint32_t> &indices, uint32_t maxLevels, float maxError,
-                                const std::function<float(uint32_t, uint32_t)> &difference = nullptr);
+                                const std::function<float(uint32_t, uint32_t)> &difference = nullptr,
+                                const std::atomic<bool> *stop = nullptr);
 
 } // namespace vkr
