@@ -20,6 +20,9 @@ const uint32_t kCompositeFrag[] =
 const uint32_t kTraceFrag[] =
 #include "ssr_trace.frag.inc"
 ;
+const uint32_t kTraceAddFrag[] =
+#include "ssr_trace_add.frag.inc"
+;
 
 constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  // Renderer::kColorFormat
 constexpr uint32_t kBindings = 9;
@@ -85,7 +88,7 @@ SsrDenoise::~SsrDenoise()
     const VkDevice d = _dev.device;
     vkDeviceWaitIdle(d);
     _Destroy();
-    for (VkPipeline p : {_spatial, _temporal, _composite, _trace}) {
+    for (VkPipeline p : {_spatial, _temporal, _composite, _trace, _traceAdd}) {
         vkDestroyPipeline(d, p, nullptr);
     }
     vkDestroyPipelineLayout(d, _layout, nullptr);
@@ -112,7 +115,7 @@ void SsrDenoise::Resize(uint32_t width, uint32_t height, VkImageView depth)
     _depth = depth;
 }
 
-void SsrDenoise::Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout)
+void SsrDenoise::Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout, bool denoise)
 {
     divisor = std::clamp(divisor, 1u, 2u);
     if (!_trace) {
@@ -124,43 +127,60 @@ void SsrDenoise::Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout)
         lci.pPushConstantRanges = &range;
         Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_traceLayout), "vkCreatePipelineLayout");
         _trace = CreateFullscreenPipeline(_dev, _traceLayout, kTraceFrag, sizeof(kTraceFrag), kFormat);
+        _traceAdd = CreateFullscreenPipeline(_dev, _traceLayout, kTraceAddFrag, sizeof(kTraceAddFrag), kColorFormat, true);
     }
-    if (_rays.image && divisor == _divisor) {
+    if (_rays.image && divisor == _divisor && denoise == _denoise) {
         return;
     }
     _Destroy();
     _divisor = divisor;
+    _denoise = denoise;
     _fresh = true;
     const VkImageUsageFlags storage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                                       VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     const VkImageUsageFlags target = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     // Blocks: the last one of an odd size holds one pixel.
     const uint32_t width = (_width + divisor - 1) / divisor, height = (_height + divisor - 1) / divisor;
+    // Without the denoiser: none of the passes' targets, and at full
+    // resolution no directions (the mirror rays' alpha rides with what the
+    // pixel reflects).
     for (Image *img : {&_rays, &_directions, &_normals, &_factor}) {
         const bool blocks = img == &_directions;
+        if (blocks && !denoise && divisor == 1) {
+            continue;  // (per block the trace still stores its rays' directions)
+        }
         *img = _dev.CreateImage(kFormat, blocks ? width : _width, blocks ? height : _height, 1, 1, storage,
                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     }
     for (Image *img : {&_traced, &_resolved, &_history[0], &_history[1]}) {
-        if (img == &_traced && divisor == 1) {
-            continue;  // the rays go into _rays
+        if (img == &_traced ? divisor == 1 : !denoise) {
+            continue;  // at full resolution the rays go into _rays (or the colour)
         }
         *img = _dev.CreateImage(kFormat, width, height, 1, 1, target, VK_IMAGE_ASPECT_COLOR_BIT,
                                 VK_IMAGE_VIEW_TYPE_2D);
     }
     _dev.Submit([&](VkCommandBuffer cmd) {
         for (Image *img : {&_rays, &_directions, &_normals, &_factor}) {
+            if (!img->image) {
+                continue;
+            }
             ImageBarrier(cmd, img->image, Color(), VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                          VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                          VK_IMAGE_LAYOUT_GENERAL);
         }
         // The histories are read before their first write.
         for (Image *img : {&_history[0], &_history[1]}) {
+            if (!img->image) {
+                continue;
+            }
             ImageBarrier(cmd, img->image, Color(), VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                          VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
     });
+    if (!denoise && divisor == 1) {
+        return;  // the trace adds to the colour: no passes, no set
+    }
 
     const VkDescriptorPoolSize size[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * (kBindings + 1)},
                                           {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
@@ -177,16 +197,18 @@ void SsrDenoise::Prepare(uint32_t divisor, VkDescriptorSetLayout sceneLayout)
     Check(vkAllocateDescriptorSets(_dev.device, &ai, _sets), "vkAllocateDescriptorSets");
     for (uint32_t i = 0; i < 2; ++i) {
         const VkImageLayout general = VK_IMAGE_LAYOUT_GENERAL, read = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // Without the denoiser what the pixel reflects stands in for the passes' images (bound, never read).
+        const VkDescriptorImageInfo none{_nearest, _rays.view, general};
         const VkDescriptorImageInfo images[kBindings + 1] = {
             {_nearest, _depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
             divisor > 1 ? VkDescriptorImageInfo{_nearest, _traced.view, read}
                         : VkDescriptorImageInfo{_nearest, _rays.view, general},
-            {_nearest, _directions.view, general},
+            denoise ? VkDescriptorImageInfo{_nearest, _directions.view, general} : none,
             {_nearest, _normals.view, general},
             {_nearest, _factor.view, general},
-            {_nearest, _resolved.view, read},
-            {_linear, _history[i ^ 1].view, read},
-            {_nearest, _history[i].view, read},
+            denoise ? VkDescriptorImageInfo{_nearest, _resolved.view, read} : none,
+            denoise ? VkDescriptorImageInfo{_linear, _history[i ^ 1].view, read} : none,
+            denoise ? VkDescriptorImageInfo{_nearest, _history[i].view, read} : none,
             {_nearest, _blueNoise, read},
             {_nearest, _rays.view, general}};
         VkWriteDescriptorSet writes[kBindings + 1] = {};
@@ -214,6 +236,9 @@ void SsrDenoise::Clear(VkCommandBuffer cmd)
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
                  VK_IMAGE_LAYOUT_GENERAL);
     for (const Image *img : {&_rays, &_directions, &_normals}) {
+        if (!img->image) {
+            continue;
+        }
         ImageBarrier(cmd, img->image, Color(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                      VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
@@ -222,9 +247,9 @@ void SsrDenoise::Clear(VkCommandBuffer cmd)
 
 void SsrDenoise::Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView color, const float invViewProj[16],
                          const float prevViewProj[16], const float eye[3], uint32_t noise, bool history,
-                         float dimension, VkImageView splits, bool addToSplits, float indirect, bool denoise,
-                         uint32_t interleave)
+                         float dimension, VkImageView splits, bool addToSplits, float indirect, uint32_t interleave)
 {
+    const bool denoise = _denoise;
     StorageBarrier(cmd);  // the shading pass's splits
     const VkDescriptorImageInfo splitsInfo{VK_NULL_HANDLE, splits, VK_IMAGE_LAYOUT_GENERAL};
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -244,9 +269,17 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkDescriptorSet scene, VkImageView
                          (traced ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : 0),
                      VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     };
-    stored(_rays, !blocks);
+    stored(_rays, !blocks && denoise);
     stored(_normals);
     stored(_factor);
+    if (!blocks && !denoise) {
+        // The mirror rays, each pixel's reflection added to the colour by the trace (ssr_trace.frag's ADD build).
+        DenoiseParams add{};
+        DrawFullscreen(cmd, _traceAdd, _traceLayout, scene, color, _width, _height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       &add, sizeof(add));
+        StorageBarrier(cmd);
+        return;
+    }
     if (!blocks) {
         stored(_directions, true);
     }

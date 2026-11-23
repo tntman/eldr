@@ -42,6 +42,7 @@ The package also adds its folder to `HOUDINI_PATH`, which lists Eldr in Solaris'
 | `HDVK_DEBUG_HOLD` | `1`: prints per frame whether the camera moved, the still delay, the render width and the GPU time |
 | `HDVK_NO_STATS` | `1`: reports only the renderer name to the app's render stats |
 | `HDVK_NO_POSE_SHARE`, `HDVK_NO_SHUTTER_SHARE` | `1`: each mesh poses its skeleton, each prototype samples the shutter on its own (A/B tests of crowd sync) |
+| `HDVK_SSR_INLINE` | `1`: screen-space reflections' mirror rays trace in the shading pass instead of their own pass after it (when not moving), for A/B tests; the image is the same |
 | `HDVK_NO_SAMPLE_REUSE` | `1`: every film sample redoes the work the samples share (skinning, planar mirror renders, unjittered sun shadow maps), for A/B tests; the image is the same |
 | `HDVK_SYNC_TEARDOWN` | `1`: waits for the GPU to shut down when a render ends, instead of in the background (the tests set it) |
 | `HD_ENABLE_DEFERRED_SKINNING` | USD's own: `1` leaves UsdSkel crowds to Eldr, so instanced agents stay instances (much less memory). USD reads it at start, so set it before the app starts |

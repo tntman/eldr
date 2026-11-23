@@ -17,7 +17,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 envRadiance;    // rgb multiplier, w = 1 if a dome is active
     mat4 prevViewProj;   // unjittered camera of the last frame (previousColor, motion vectors)
     vec4 ssr;            // x = 1: trace reflections, y = noise index, z: SsrDenoise's rays (renderer/ssr.h,
-                         // ssr_trace.frag): 1 denoised, 4 interleaved; per block of pixels 2 denoised, 3 mirror rays,
+                         // ssr_trace.frag): 1 denoised, 4 interleaved, 2 denoised per block of pixels; 3 mirror rays
+                         // (per block while moving, else per pixel); 0: mesh.frag traces its mirror rays itself,
                          // w = 1: unscale hits by last frame's light splits
     vec4 clusters;       // near, far (along cameraForward), log2(far / near), light cutoff radiance
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;

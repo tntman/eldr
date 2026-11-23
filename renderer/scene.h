@@ -365,6 +365,14 @@ struct Material {
     // Transmission or subsurface from the constant or the program (textured
     // weights): the passes these materials need.
     bool Transmits() const { return transmission > 0 || program.Outputs(MaterialProgram::kTransmission); }
+    // Whether screen-space reflections can show on it (mesh.frag's
+    // ssrWeight): glossy enough and with a specular lobe, by its constants;
+    // a texture or graph may be anything.
+    bool SsrRange() const
+    {
+        return !program.Empty() || ((roughness < 0.6f || roughnessTex.texture) &&
+                                    (specularWeight > 0 || metallic > 0 || metallicTex.texture || specularWorkflow));
+    }
     bool Scatters() const { return subsurface > 0 || program.Outputs(MaterialProgram::kSubsurface); }
 
     // Displacement (mesh.vert, every pass): an offset along the vertex
@@ -977,6 +985,8 @@ public:
         // the opaque colour for it.
         bool refraction = false;
         bool holdouts = false;  // a drawn mesh is a holdout (Mesh::holdout)
+        bool reflective = false;  // a mesh's material is in SSR's range (Material::SsrRange; none: it is)
+        bool toon = false;        // a mesh's material has toon bands (Material::toonBands)
         // Caustics: the lights that send photons (indices into lights:
         // Light::caustics, distant, sphere, rect, disk) and the drawn
         // casters' world bounds (none: min > max).
