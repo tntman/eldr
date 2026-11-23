@@ -70,7 +70,14 @@ public:
     }
     // Whether it was mapped since the last call (the render pass's, once a frame).
     bool TakeMapped() { return _mapped.exchange(false); }
-    void Unmap() override { --_mappers; }
+    void Unmap() override
+    {
+        --_mappers;
+        if (HdVkCallTimes::On()) {
+            HdVkCallTimes::Get().lastUnmap = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
+    }
     bool IsMapped() const override { return _mappers > 0; }
 
     void Resolve() override {}

@@ -4797,11 +4797,41 @@ int main()
             }
             grid->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0.5f, 1,
                                 0.06f, 0, 0, 0, 0, 0.06f, 0, 0, 0, 0, 0.06f, 0, 0.5f, 0.5f, 0.2f, 1};
+            const std::vector<float> gridPoints = grid->points, gridTransforms = grid->transforms;
             do {  // the levels build in the background
                 scene.Commit();
             } while (scene.LodsPending());
             Render(renderer, scene);
             const uint64_t lod = renderer.GetStats().triangles;
+            {
+                // Levels built ahead (Scene::BuildLodsAhead, a sequence's
+                // next frame): the upload of the same content takes them,
+                // any other content builds its own.
+                vkr::Scene sequence(&device);
+                AddLight(sequence, 0, 0, -1);
+                vkr::Mesh guess, wrong;
+                guess.points = wrong.points = gridPoints;
+                wrong.points[2] += 0.01f;
+                sequence.BuildLodsAhead(guess);
+                sequence.BuildLodsAhead(wrong);
+                vkr::Mesh *next = sequence.AddMesh();
+                next->points = gridPoints;
+                next->transforms = gridTransforms;
+                do {
+                    sequence.Commit();
+                } while (sequence.LodsPending());
+                Render(renderer, sequence);
+                Expect(sequence.LodsAheadTaken() == 1 && renderer.GetStats().triangles < 2u * 2048u - 512u,
+                       "levels of detail built ahead: the upload of the same content takes them");
+                vkr::Mesh *other = sequence.AddMesh();
+                other->points = gridPoints;
+                other->points[5] += 0.01f;
+                other->transforms = gridTransforms;
+                do {
+                    sequence.Commit();
+                } while (sequence.LodsPending());
+                Expect(sequence.LodsAheadTaken() == 1, "levels of detail built ahead: other content builds its own");
+            }
             vkr::Renderer::Frame whole = IdentityFrame();
             whole.lod = false;
             Render(renderer, scene, whole);

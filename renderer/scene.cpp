@@ -368,6 +368,7 @@ Scene::Scene(Device *device)
 
 Scene::~Scene()
 {
+    DropLodsAhead();
     if (_device) {
         for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_skinXforms,
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
@@ -920,10 +921,12 @@ void Scene::_ReleaseGeometry(Mesh &m)
 // Runs on several threads at once (Commit): the pools, the shared
 // geometry and the staging are under _uploadMutex, the per-mesh work (the
 // vertices, bounds and level of detail inputs) outside it.
-void Scene::_UploadGeometry(Mesh &m)
+void Scene::_UploadGeometry(Mesh &m, bool ahead)
 {
     std::unique_lock<std::mutex> lock(_uploadMutex);
-    _ReleaseGeometry(m);
+    if (!ahead) {
+        _ReleaseGeometry(m);
+    }
     m._velocityCount = 0;
     m._lods.clear();
     ++m._lodGeneration;  // levels still building for the last upload don't fit
@@ -987,7 +990,7 @@ void Scene::_UploadGeometry(Mesh &m)
     // detail are built keeps drawing whole.
     const bool shareable = Shareable(m);
     const uint64_t key = shareable ? GeometryKey(m) : 0;
-    for (auto [it, end] = _sharedGeometry.equal_range(key); shareable && it != end; ++it) {
+    for (auto [it, end] = _sharedGeometry.equal_range(key); shareable && !ahead && it != end; ++it) {
         if (SameGeometry(*it->second->users.front(), m)) {
             join(*it->second);
             // The first user's arrays are the content: this one's copy would
@@ -1257,7 +1260,20 @@ void Scene::_UploadGeometry(Mesh &m)
             }
         }
     }
+    // The inputs' hash, only while builds started ahead wait for their uploads.
+    uint64_t lodKey = 0;
+    if (lods && (ahead || _lodsAheadAny)) {
+        const uint64_t scalars[2] = {stride, m.influences};
+        lodKey = HashBytes(0xCBF29CE484222325ull, scalars, sizeof(scalars));
+        lodKey = HashArray(HashArray(HashArray(lodKey, lodVertices), indices), influences);
+    }
     lock.lock();
+    const LodJob lodJob = lods ? _StartLods(lodKey, std::move(lodVertices), stride, indices, std::move(influences),
+                                            m.influences, ahead)
+                               : LodJob{};
+    if (ahead) {
+        return;
+    }
     uint32_t vertexOffset, firstIndex;
     while (!_vertexAlloc.Allocate(vertexCount, &vertexOffset)) {
         _EnsureCapacity(_vertices, _vertexAlloc, vertexCount, sizeof(Vertex),
@@ -1278,36 +1294,7 @@ void Scene::_UploadGeometry(Mesh &m)
     m._firstIndex = firstIndex;
     m._indexCount = indexCount;
     if (lods) {
-        const uint32_t n = m.influences;
-        _pendingLods.push_back(
-            {&m, m._lodGeneration,
-             std::async(std::launch::async, [lodVertices = std::move(lodVertices), stride, indices,
-                                             influences = std::move(influences), n] {
-                 // Half the L1 distance of two vertices' joint weights.
-                 auto difference = [&](uint32_t a, uint32_t b) {
-                     float d = 0.0f;
-                     for (uint32_t i = 0; i < n; ++i) {
-                         const auto [joint, weight] = influences[size_t(a) * n + i];
-                         float other = 0.0f;
-                         for (uint32_t k = 0; k < n; ++k) {
-                             other += influences[size_t(b) * n + k].first == joint ? influences[size_t(b) * n + k].second
-                                                                                   : 0.0f;
-                         }
-                         d += std::abs(weight - other);
-                     }
-                     for (uint32_t k = 0; k < n; ++k) {  // b's joints a lacks
-                         const auto [joint, weight] = influences[size_t(b) * n + k];
-                         bool shared = false;
-                         for (uint32_t i = 0; i < n; ++i) {
-                             shared = shared || influences[size_t(a) * n + i].first == joint;
-                         }
-                         d += shared ? 0.0f : weight;
-                     }
-                     return 0.5f * d;
-                 };
-                 return BuildLods(lodVertices.data(), stride, lodVertices.size() / stride, indices, kMaxLods, kLodMaxError,
-                                  influences.empty() ? std::function<float(uint32_t, uint32_t)>() : difference);
-             })});
+        _pendingLods.push_back({&m, m._lodGeneration, lodJob.levels});
     }
     if (packed > 0) {
         while (!_primvarVertexAlloc.Allocate(vertexCount, &m._primvarVertexOffset)) {
@@ -1365,6 +1352,93 @@ void Scene::_UploadGeometry(Mesh &m)
         shared->users.push_back(&m);
         m._shared = shared.get();
         _sharedGeometry.emplace(key, std::move(shared));
+    }
+}
+
+// Under _uploadMutex. The build of these inputs: one started ahead, else a
+// new one (`ahead`: kept in _lodsAhead).
+Scene::LodJob Scene::_StartLods(uint64_t key, std::vector<float> vertices, size_t stride,
+                                const std::vector<uint32_t> &indices,
+                                std::vector<std::pair<uint32_t, float>> influences, uint32_t perVertex, bool ahead)
+{
+    for (auto [it, end] = _lodsAhead.equal_range(key); it != end; ++it) {
+        const LodInputs &in = *it->second.inputs;
+        if (in.stride == stride && in.perVertex == perVertex && in.vertices == vertices && in.indices == indices &&
+            in.influences == influences) {
+            if (!ahead) {
+                it->second.taken = true;
+                ++_lodsAheadTaken;
+            }
+            return it->second;
+        }
+    }
+    LodJob job;
+    job.inputs = std::make_shared<LodInputs>();
+    job.inputs->vertices = std::move(vertices);
+    job.inputs->stride = stride;
+    job.inputs->indices = indices;
+    job.inputs->influences = std::move(influences);
+    job.inputs->perVertex = perVertex;
+    job.levels = std::async(std::launch::async, [inputs = job.inputs] {
+        const LodInputs &in = *inputs;
+        const uint32_t n = in.perVertex;
+        // Half the L1 distance of two vertices' joint weights.
+        auto difference = [&](uint32_t a, uint32_t b) {
+            float d = 0.0f;
+            for (uint32_t i = 0; i < n; ++i) {
+                const auto [joint, weight] = in.influences[size_t(a) * n + i];
+                float other = 0.0f;
+                for (uint32_t k = 0; k < n; ++k) {
+                    other += in.influences[size_t(b) * n + k].first == joint ? in.influences[size_t(b) * n + k].second
+                                                                             : 0.0f;
+                }
+                d += std::abs(weight - other);
+            }
+            for (uint32_t k = 0; k < n; ++k) {  // b's joints a lacks
+                const auto [joint, weight] = in.influences[size_t(b) * n + k];
+                bool shared = false;
+                for (uint32_t i = 0; i < n; ++i) {
+                    shared = shared || in.influences[size_t(a) * n + i].first == joint;
+                }
+                d += shared ? 0.0f : weight;
+            }
+            return 0.5f * d;
+        };
+        const auto start = std::chrono::steady_clock::now();
+        std::vector<LodLevel> levels =
+            BuildLods(in.vertices.data(), in.stride, in.vertices.size() / in.stride, in.indices, kMaxLods, kLodMaxError,
+                      in.influences.empty() ? std::function<float(uint32_t, uint32_t)>() : difference, &in.stop);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        if (TimingLevel() >= 3 && ms >= 20.0) {
+            std::fprintf(stderr, "HdVk levels of detail: %zu triangles, %zu levels, %.0f ms\n", in.indices.size() / 3,
+                         levels.size(), ms);
+        }
+        return levels;
+    }).share();
+    if (ahead) {
+        _lodsAhead.emplace(key, job);
+        _lodsAheadAny = true;
+    }
+    return job;
+}
+
+void Scene::BuildLodsAhead(Mesh &mesh)
+{
+    if (_device && mesh.jointIndices.empty()) {
+        _UploadGeometry(mesh, true);
+    }
+}
+
+void Scene::DropLodsAhead()
+{
+    std::unordered_multimap<uint64_t, LodJob> dropped;  // their builds end outside the lock
+    {
+        std::lock_guard<std::mutex> lock(_uploadMutex);
+        dropped.swap(_lodsAhead);
+        _lodsAheadAny = false;
+    }
+    for (auto &[key, job] : dropped) {
+        job.inputs->stop = !job.taken;
     }
 }
 
@@ -2187,9 +2261,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             ++it;
             continue;
         }
-        std::vector<LodLevel> levels = it->levels.get();
         if (it->mesh && it->generation == it->mesh->_lodGeneration) {
-            _StoreLods(*it->mesh, std::move(levels));
+            _StoreLods(*it->mesh, it->levels.get());
             changed = true;
         }
         it = _pendingLods.erase(it);

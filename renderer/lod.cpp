@@ -63,7 +63,8 @@ struct Candidate {
 
 std::vector<LodLevel> BuildLods(const float *vertices, size_t stride, size_t vertexCount,
                                 const std::vector<uint32_t> &indices, uint32_t maxLevels, float maxError,
-                                const std::function<float(uint32_t, uint32_t)> &difference)
+                                const std::function<float(uint32_t, uint32_t)> &difference,
+                                const std::atomic<bool> *stop)
 {
     std::vector<LodLevel> levels;
     const size_t triangles = indices.size() / 3;
@@ -101,6 +102,16 @@ std::vector<LodLevel> BuildLods(const float *vertices, size_t stride, size_t ver
     std::vector<double> linear(vertexCount * attributes * 4, 0.0);
     std::vector<uint64_t> edges;  // (smaller vertex, larger), once per triangle using it
     edges.reserve(triangles * 3);
+    {
+        // One allocation per vertex (a mesh's builds run next to a hundred others).
+        std::vector<uint32_t> valence(vertexCount, 0);
+        for (const uint32_t v : tri) {
+            ++valence[v];
+        }
+        for (size_t v = 0; v < vertexCount; ++v) {
+            vertexTris[v].reserve(valence[v]);
+        }
+    }
     for (size_t t = 0; t < triangles; ++t) {
         const uint32_t *v = &tri[t * 3];
         double n[3];
@@ -206,14 +217,21 @@ std::vector<LodLevel> BuildLods(const float *vertices, size_t stride, size_t ver
             }
         }
         Candidate best{std::numeric_limits<double>::max(), from, from, stamp[from]};
+        // A neighbour comes up in two triangles: its cost once (the first
+        // of equal costs wins either way).
+        uint32_t seen[16];
+        size_t seenCount = 0;
         for (const uint32_t t : vertexTris[from]) {
             if (!alive[t]) {
                 continue;
             }
             for (int k = 0; k < 3; ++k) {
                 const uint32_t to = tri[t * 3 + k];
-                if (to == from) {
+                if (to == from || std::find(seen, seen + seenCount, to) != seen + seenCount) {
                     continue;
+                }
+                if (seenCount < 16) {
+                    seen[seenCount++] = to;
                 }
                 const double cost = error(from, to) + spread * spread;
                 if (cost < best.cost) {
@@ -227,6 +245,9 @@ std::vector<LodLevel> BuildLods(const float *vertices, size_t stride, size_t ver
         }
     };
     for (uint32_t v = 0; v < vertexCount; ++v) {
+        if (stop && (v & 4095u) == 0 && stop->load(std::memory_order_relaxed)) {
+            return {};
+        }
         if (!vertexTris[v].empty()) {
             queue(v);
         }
@@ -258,6 +279,9 @@ std::vector<LodLevel> BuildLods(const float *vertices, size_t stride, size_t ver
     while (levels.size() < maxLevels) {
         bool done = heap.empty();
         while (live > target && !heap.empty()) {
+            if (stop && stop->load(std::memory_order_relaxed)) {
+                return {};
+            }
             const Candidate c = heap.top();
             if (c.cost > maxCost) {
                 done = true;

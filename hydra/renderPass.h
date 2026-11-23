@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <map>
 #include <chrono>
+#include <chrono>
 #include <optional>
 
 namespace vkr {
@@ -45,6 +46,14 @@ private:
     GfMatrix4d _lastView, _lastProjection;  // the last real camera's (a missing camera keeps it)
     bool _hasLastCamera = false;
     SdfPath _lastCameraId;  // the camera the last frame looked through (a switch: no camera motion)
+    // The last offline frame rendered and its step from the one before
+    // (a sequence's frame increment; 0: none yet).
+    std::optional<double> _sequenceFrame;
+    double _sequenceStep = 0.0;
+    // When that frame's first sample began, how long the frame before took
+    // to converge (0: it did not, or there is none) and this frame's batch.
+    std::chrono::steady_clock::time_point _sequenceBegan;
+    double _sequenceSeconds = 0.0, _sequenceBatch = 0.0;
     // eldr:overlapReadback: the buffers (colour, depth, ids) and size last
     // frame read back into, and its depth AOV's constants.
     std::array<uintptr_t, 6> _lastReadback = {};

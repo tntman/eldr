@@ -779,6 +779,17 @@ public:
             p.levels.wait();
         }
     }
+    // A sequence's next frame, while this one renders (any thread, several
+    // at once): starts building the levels of detail of `mesh`, filled as a
+    // mesh about to upload but not one of the scene's. The upload of a mesh
+    // with the same content takes them instead of building (and waiting
+    // for) its own; any other content builds its own as ever, so a wrong
+    // guess costs only the work. Not skinned meshes (theirs are of the rest pose).
+    void BuildLodsAhead(Mesh &mesh);
+    // Before a frame's BuildLodsAhead calls: drops (and stops) the builds
+    // the last frame started that no upload took.
+    void DropLodsAhead();
+    uint32_t LodsAheadTaken() const { return _lodsAheadTaken; }  // uploads that took a build started ahead
     // Pool geometries meshes share (_sharedGeometry), each with its users.
     size_t SharedGeometries() const { return _sharedGeometry.size(); }
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
@@ -1082,7 +1093,8 @@ private:
     void _Flush();
     void _EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t needed,
                          VkDeviceSize elementSize, VkBufferUsageFlags usage, bool invalidateNew);
-    void _UploadGeometry(Mesh &mesh);
+    // `ahead`: only starts the levels of detail `mesh` would get (BuildLodsAhead).
+    void _UploadGeometry(Mesh &mesh, bool ahead = false);
     void _UploadInstances(Mesh &mesh);
     void _UploadJoints(Mesh &mesh);
     void _FreeInstances(Mesh &mesh);
@@ -1163,9 +1175,30 @@ private:
     struct PendingLods {
         Mesh *mesh;
         uint32_t generation;
-        std::future<std::vector<LodLevel>> levels;
+        std::shared_future<std::vector<LodLevel>> levels;
     };
     std::vector<PendingLods> _pendingLods;
+    // A build of levels of detail and what it builds them from (BuildLods'
+    // arguments). Those started ahead (BuildLodsAhead) wait in _lodsAhead,
+    // by a hash of their inputs, for the upload with the same inputs.
+    struct LodInputs {
+        std::vector<float> vertices;
+        size_t stride = 0;
+        std::vector<uint32_t> indices;
+        std::vector<std::pair<uint32_t, float>> influences;  // skinned: (joint, weight), perVertex each
+        uint32_t perVertex = 0;
+        std::atomic<bool> stop{false};
+    };
+    struct LodJob {
+        std::shared_ptr<LodInputs> inputs;
+        std::shared_future<std::vector<LodLevel>> levels;
+        bool taken = false;  // by an upload (several meshes of the same content each take it)
+    };
+    LodJob _StartLods(uint64_t key, std::vector<float> vertices, size_t stride, const std::vector<uint32_t> &indices,
+                      std::vector<std::pair<uint32_t, float>> influences, uint32_t perVertex, bool ahead);
+    std::unordered_multimap<uint64_t, LodJob> _lodsAhead;  // under _uploadMutex
+    std::atomic<bool> _lodsAheadAny{false};                // _lodsAhead has builds: uploads hash their inputs
+    std::atomic<uint32_t> _lodsAheadTaken{0};
     // Meshes of identical content (a crowd's agents: one body per agent,
     // each with its own joints) share their rest geometry in the pools:
     // vertices, indices, skin weights, joint bounds and levels of detail.

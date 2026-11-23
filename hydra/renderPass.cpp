@@ -38,6 +38,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <future>
 #include <map>
 #include <mutex>
 #include <set>
@@ -192,7 +193,8 @@ struct FrameTiming {
                        "stats_ms,stats_calls,map_ms,map_calls,alloc_ms,alloc_calls,isconverged_ms,isconverged_calls,"
                        "camsync_ms,camsync_calls,sync_ms,sync_calls,app_outside_eldr_ms,sync_wall_ms,mesh_topology_ms,"
                        "mesh_points_ms,mesh_instancer_ms,mesh_primvars_ms,mesh_skin_ms,mesh_shutter_ms,mesh_program_ms,"
-                       "mesh_flatten_ms,mesh_transforms_ms,mesh_joints_ms,mesh_share_ms,shutter_hits\n",
+                       "mesh_flatten_ms,mesh_transforms_ms,mesh_joints_ms,mesh_share_ms,shutter_hits,unmap_ms,"
+                       "presync_ms,scene_frame,batch_samples,batch_commit_ms,batch_read_ms,redices,redice_ms\n",
                        csv);
             auto *t = new FrameTiming;
             t->csv = csv;
@@ -208,6 +210,15 @@ struct FrameTiming {
     Clock::time_point start = Clock::now(), lastBegin = start, lastEnd = start;
     std::atomic<int64_t> fetchUs{0};
     int frame = 0;
+    // Offline executes that returned for a re-dice (no row of their own)
+    // since the last row, and the last one's return.
+    int redices = 0;
+    Clock::time_point rediceEnd = start;
+    void Redice()
+    {
+        ++redices;
+        rediceEnd = Clock::now();
+    }
 };
 
 } // namespace
@@ -240,6 +251,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     FrameTiming *const timing = FrameTiming::Get();
     const FrameTiming::Clock::time_point tBegin = FrameTiming::Clock::now();
     FrameTiming::Clock::time_point tCollect = tBegin, tRender = tBegin, tRendered = tBegin;
+    double batchCommitMs = 0.0, batchReadMs = 0.0;  // an offline batch: the commits between its samples, its readback
+    uint32_t batchSamples = 0;
+    // The app's last Unmap before this execute (the pass's own follow).
+    const int64_t appUnmap = timing ? HdVkCallTimes::Get().lastUnmap.exchange(0) : 0;
 
     // Only the pass's render tags (purposes) are drawn; no tags: all.
     uint32_t tagMask = renderTags.empty() ? ~0u : 0u;
@@ -870,6 +885,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Nobody toggles a feature in a batch render: no prewarm (its compiles
     // only made the teardown wait, seconds).
     frame.pipelinePrewarm = frame.pipelinePrewarm && !offline;
+    // An offline frame is a film from its first sample. A sequence's next
+    // frame (husk -n, usdrecord --frames) is a change like a viewport edit:
+    // without this it rendered as a moving frame (TAA at the moving render
+    // scale; under motion blur one sample, converged at once) while the
+    // first frame got the film. HDVK_OFFLINE_MOVING=1 (A/B): as before.
+    static const bool offlineMoving = TfGetenvBool("HDVK_OFFLINE_MOVING", false);
+    frame.filmRestart = frame.filmRestart || (offline && !offlineMoving);
     // Houdini's viewport colour-corrects every delegate's colour itself (its
     // OCIO view, gamma, LUT): with eldr:productLinear it gets the EXR's
     // linear beauty, as from Karma, not Eldr's tonemap, bloom or auto exposure.
@@ -955,6 +977,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         static_cast<HdVkRenderDelegate *>(delegate)->KeepMotion();
     }
     if (resync && offline) {
+        if (timing) {
+            timing->Redice();
+        }
         return;
     }
     const bool firstFrame = std::all_of(_lastViewProj, _lastViewProj + 16, [](float v) { return v == 0.0f; });
@@ -989,6 +1014,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             vk->SetDicingView(dicing, redice);
             _redicing = redice;
             if (offline && redice) {
+                if (timing) {
+                    timing->Redice();
+                }
                 return;
             }
         }
@@ -1313,12 +1341,51 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         _lastDeferred = frame.deferReadback;
         _lastReadback = readback;
         _lastDepthConstants = depthConstants;
+        // A sequence (husk -n, usdrecord --frames): while this frame waits
+        // for its levels of detail and renders, the CPU starts the next
+        // frame's for the meshes that deform (HdVkMesh::BuildLodsAhead),
+        // which that frame otherwise builds and waits for before its first
+        // sample. From the second frame on, by the step between the
+        // frames. It reads the scene: joined before this execute returns
+        // (the future's destructor). HDVK_NO_LODS_AHEAD=1 (A/B): none.
+        std::future<void> ahead;
+        if (offline && (!_sequenceFrame || *_sequenceFrame != sceneFrame)) {
+            _sequenceStep = _sequenceFrame ? sceneFrame - *_sequenceFrame : 0.0;
+            _sequenceFrame = sceneFrame;
+            // And its samples come in one batch when the frame before
+            // converged (no time limit cut it short): a batch as long as
+            // that frame took plus a quarter, at most ten of the setting's.
+            // husk waits about 0.1 s after every execute that has not
+            // converged (7-9% of a frame at 1 s batches). The first frame
+            // keeps the setting's updates. HDVK_NO_SEQUENCE_BATCH=1 (A/B): all do.
+            static const bool plain = TfGetenvBool("HDVK_NO_SEQUENCE_BATCH", false);
+            _sequenceBatch = plain ? 0.0 : std::min(1.25 * _sequenceSeconds, 10.0 * double(batchSeconds));
+            _sequenceSeconds = 0.0;
+            _sequenceBegan = FrameTiming::Clock::now();
+            static const bool off = TfGetenvBool("HDVK_NO_LODS_AHEAD", false);
+            if (_sequenceStep != 0.0 && !off) {
+                ahead = std::async(std::launch::async, [this, step = float(_sequenceStep)] {
+                    const auto start = FrameTiming::Clock::now();
+                    HdVkMesh::BuildLodsAhead(_scene, step);
+                    if (vkr::TimingLevel() >= 3) {
+                        std::fprintf(stderr, "HdVk levels of detail ahead: flattened in %.0f ms, %u taken so far\n",
+                                     FrameTiming::Ms(start, FrameTiming::Clock::now()), _scene.LodsAheadTaken());
+                    }
+                });
+            }
+        }
         // Offline, levels of detail that arrive mid-frame start the film
         // over: the frame waits for them (they build on other threads)
         // and starts with them.
         if (offline && _scene.LodsPending()) {
+            const auto waitStart = FrameTiming::Clock::now();
             _scene.WaitForLods();
+            const auto waited = FrameTiming::Clock::now();
             _scene.Commit(true);
+            if (vkr::TimingLevel() >= 3) {
+                std::fprintf(stderr, "HdVk levels of detail: waited %.0f ms, stored in %.0f ms\n",
+                             FrameTiming::Ms(waitStart, waited), FrameTiming::Ms(waited, FrameTiming::Clock::now()));
+            }
         }
         tRender = FrameTiming::Clock::now();
         if (tiled) {
@@ -1353,7 +1420,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             vkr::Renderer::Targets sample = out;
             sample.readback = false;
             const auto until = tRender + std::chrono::duration_cast<FrameTiming::Clock::duration>(
-                                             std::chrono::duration<double>(batchSeconds));
+                                             std::chrono::duration<double>(std::max(double(batchSeconds), _sequenceBatch)));
             double renderMs = 0.0, commitMs = 0.0;  // HDVK_TIMING=3: the batch's samples and the commits between them
             uint32_t samples = 0;
             for (;;) {
@@ -1372,10 +1439,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 commitMs += FrameTiming::Ms(t1, FrameTiming::Clock::now());
             }
             const auto tRead = FrameTiming::Clock::now();
+            if (_renderer->IsConverged() && !_scene.LodsPending()) {
+                _sequenceSeconds = std::chrono::duration<double>(tRead - _sequenceBegan).count();
+            }
             _renderer->Read(out);
+            batchSamples = samples;
+            batchCommitMs = commitMs;
+            batchReadMs = FrameTiming::Ms(tRead, FrameTiming::Clock::now());
             if (vkr::TimingLevel() >= 3) {
                 std::fprintf(stderr, "HdVk batch: %u samples, render %.1f ms, commits between %.1f ms, read %.1f ms\n",
-                             samples, renderMs, commitMs, FrameTiming::Ms(tRead, FrameTiming::Clock::now()));
+                             samples, renderMs, commitMs, batchReadMs);
             }
         } else {
             _renderer->Render(_scene, frame, out);
@@ -1620,7 +1693,20 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             std::fprintf(timing->csv, ",%.3f", calls.ns[e].exchange(0) / 1e6);
             calls.calls[e] = 0;
         }
-        std::fprintf(timing->csv, ",%lld\n", (long long)HdVkTakeShutterHits());
+        // An offline sequence's change of frame: the app reads the buffers
+        // and writes its image (until its last Unmap), then changes the
+        // time, up to the first prim sync (the stage's and Hydra's invalidation).
+        const auto ns = [](FrameTiming::Clock::time_point t) {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+        };
+        const int64_t lastEnd = ns(timing->lastEnd), unmapped = std::max(appUnmap, lastEnd);
+        calls.lastUnmap = 0;  // the pass's own
+        std::fprintf(timing->csv, ",%lld,%.3f,%.3f,%g,%u,%.3f,%.3f,%d,%.3f\n", (long long)HdVkTakeShutterHits(),
+                     (unmapped - lastEnd) / 1e6,
+                     syncEnd > syncBegin ? double(std::max<int64_t>(syncBegin - unmapped, 0)) / 1e6 : 0.0, sceneFrame,
+                     batchSamples, batchCommitMs, batchReadMs, timing->redices,
+                     timing->redices ? T::Ms(timing->lastEnd, timing->rediceEnd) : 0.0);
+        timing->redices = 0;
         std::fflush(timing->csv);
         timing->lastBegin = tBegin;
         timing->lastEnd = tEnd;
