@@ -1194,9 +1194,10 @@ private:
         std::shared_future<std::vector<LodLevel>> levels;
         bool taken = false;  // by an upload (several meshes of the same content each take it)
     };
-    LodJob _StartLods(std::vector<float> vertices, size_t stride, const std::vector<uint32_t> &indices,
+    LodJob _StartLods(uint64_t key, std::vector<float> vertices, size_t stride, const std::vector<uint32_t> &indices,
                       std::vector<std::pair<uint32_t, float>> influences, uint32_t perVertex, bool ahead);
     std::unordered_multimap<uint64_t, LodJob> _lodsAhead;  // under _uploadMutex
+    std::atomic<bool> _lodsAheadAny{false};                // _lodsAhead has builds: uploads hash their inputs
     std::atomic<uint32_t> _lodsAheadTaken{0};
     // Meshes of identical content (a crowd's agents: one body per agent,
     // each with its own joints) share their rest geometry in the pools:

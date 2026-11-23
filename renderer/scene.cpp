@@ -1260,8 +1260,15 @@ void Scene::_UploadGeometry(Mesh &m, bool ahead)
             }
         }
     }
+    // The inputs' hash, only while builds started ahead wait for their uploads.
+    uint64_t lodKey = 0;
+    if (lods && (ahead || _lodsAheadAny)) {
+        const uint64_t scalars[2] = {stride, m.influences};
+        lodKey = HashBytes(0xCBF29CE484222325ull, scalars, sizeof(scalars));
+        lodKey = HashArray(HashArray(HashArray(lodKey, lodVertices), indices), influences);
+    }
     lock.lock();
-    const LodJob lodJob = lods ? _StartLods(std::move(lodVertices), stride, indices, std::move(influences),
+    const LodJob lodJob = lods ? _StartLods(lodKey, std::move(lodVertices), stride, indices, std::move(influences),
                                             m.influences, ahead)
                                : LodJob{};
     if (ahead) {
@@ -1350,12 +1357,10 @@ void Scene::_UploadGeometry(Mesh &m, bool ahead)
 
 // Under _uploadMutex. The build of these inputs: one started ahead, else a
 // new one (`ahead`: kept in _lodsAhead).
-Scene::LodJob Scene::_StartLods(std::vector<float> vertices, size_t stride, const std::vector<uint32_t> &indices,
+Scene::LodJob Scene::_StartLods(uint64_t key, std::vector<float> vertices, size_t stride,
+                                const std::vector<uint32_t> &indices,
                                 std::vector<std::pair<uint32_t, float>> influences, uint32_t perVertex, bool ahead)
 {
-    const uint64_t scalars[2] = {stride, perVertex};
-    uint64_t key = HashBytes(0xCBF29CE484222325ull, scalars, sizeof(scalars));
-    key = HashArray(HashArray(HashArray(key, vertices), indices), influences);
     for (auto [it, end] = _lodsAhead.equal_range(key); it != end; ++it) {
         const LodInputs &in = *it->second.inputs;
         if (in.stride == stride && in.perVertex == perVertex && in.vertices == vertices && in.indices == indices &&
@@ -1412,6 +1417,7 @@ Scene::LodJob Scene::_StartLods(std::vector<float> vertices, size_t stride, cons
     }).share();
     if (ahead) {
         _lodsAhead.emplace(key, job);
+        _lodsAheadAny = true;
     }
     return job;
 }
@@ -1429,6 +1435,7 @@ void Scene::DropLodsAhead()
     {
         std::lock_guard<std::mutex> lock(_uploadMutex);
         dropped.swap(_lodsAhead);
+        _lodsAheadAny = false;
     }
     for (auto &[key, job] : dropped) {
         job.inputs->stop = !job.taken;

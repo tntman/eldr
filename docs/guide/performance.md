@@ -9,8 +9,8 @@ Houdini writes a crowd as one animated Xform per agent above an instanceable ske
 | crowd_9k, 480x270 | Without | With deferred skinning |
 |---|---|---|
 | Peak memory | 7.5 GB | 2.4 GB |
-| First frame | 81 s | 55 s |
-| Each further frame | 23 s | 13 s |
+| First frame | 34 s | 12 s |
+| Each further frame | 11.5 s | 3.5 s |
 
 Deferred skinning is USD's switch `HD_ENABLE_DEFERRED_SKINNING=1`, read once when the program starts. Eldr's package gives you a husk wrapper that sets it:
 
@@ -101,6 +101,24 @@ What Eldr does to start sooner:
 **Offline Samples per Execute** (1 s) sets how often husk gets an image back: each update costs about 0.1 s, so a larger value finishes a long render a little sooner and updates MPlay less often.
 
 `HDVK_TIMING=2` prints a timeline on the console (`HdVk mark:` lines, the first commits' parts, each update's GPU passes) and writes the frame timing CSV ([Houdini](../houdini.md)).
+
+## Sequences
+
+husk renders a shot in one process (`husk -f 1 -n 240`). Every frame is a film from its first sample: the same image as that frame rendered alone. Between frames Eldr keeps what stays the same:
+
+- Geometry, textures, levels of detail and pipelines stay on the GPU. Only prims with time samples sync again; a moving camera alone syncs nothing.
+- A deforming mesh (time-sampled points) uploads its new points. Its levels of detail for the next frame build on the CPU while the GPU renders the current one, so that frame starts at once. Deforming curves and points build theirs when the frame arrives.
+- From the second frame on, a frame's samples render in one batch (up to ten times **Offline Samples per Execute**) when the frame before converged: husk waits about 0.1 s after every batch.
+
+What a further frame costs, 960x540, 256 film samples and denoising, GTX 1080 Ti:
+
+| Scene | Further frame | Samples | Sync, upload | Denoise | husk, USD |
+|---|---|---|---|---|---|
+| Sponza, a knight of 0.9 million triangles deforming | 4.2 s | 3.1 s | 0.6 s | 0.3 s | 0.2 s |
+| Sponza, only the camera moves | 7.4 s | 7.0 s | 0 | 0.3 s | 0.1 s |
+| 9,324 skinned agents | 9.9 s | 7.6 s | 1.5 s | 0.3 s | 0.5 s |
+
+The samples are the frame: a faster sequence is fewer film samples or cheaper effects. The crowd's sync is UsdSkel posing every skeleton at the frame and at the shutter's open and close; its husk and USD time is the stage's change of frame. husk writes the EXR in about 0.05 s. A sequence's first two frames build their levels of detail as a single frame does (the knight: 4 s more). `HDVK_TIMING=2`'s CSV has every frame's split (`scene_frame`, `sync_wall_ms`, `presync_ms`, `unmap_ms`).
 
 ## Where the time goes
 

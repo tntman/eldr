@@ -1353,8 +1353,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             _sequenceStep = _sequenceFrame ? sceneFrame - *_sequenceFrame : 0.0;
             _sequenceFrame = sceneFrame;
             // And its samples come in one batch when the frame before
-            // converged (no time limit cut it short), as long as that one
-            // took and a quarter, at most ten of the setting's batches:
+            // converged (no time limit cut it short): a batch as long as
+            // that frame took plus a quarter, at most ten of the setting's.
             // husk waits about 0.1 s after every execute that has not
             // converged (7-9% of a frame at 1 s batches). The first frame
             // keeps the setting's updates. HDVK_NO_SEQUENCE_BATCH=1 (A/B): all do.
