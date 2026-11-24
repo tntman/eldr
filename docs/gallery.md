@@ -10,68 +10,68 @@ Every scene renders four ways with husk: ● **Eldr raster + SSGI**, every effec
 
 | Scene | Samples (Eldr / Karma) | Eldr raster + SSGI | Eldr ray traced | Karma XPU | Karma CPU | Brightness vs Karma CPU (raster / ray traced / XPU) |
 |---|---|---:|---:|---:|---:|---|
-| [Global illumination](#global-illumination) | 256 / 512 | 684 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ < 0.1 s</sub> | 14.7 s <sub>+ 1.4 s</sub> | 47.3 s <sub>+ 720 ms</sub> | 0.75× / 1.02× / 1.02× |
-| [Clearcoat](#clearcoat) | 256 / 512 | 763 ms <sub>+ < 0.1 s</sub> | 3.2 s <sub>+ < 0.1 s</sub> | 11.3 s <sub>+ 1.3 s</sub> | 36.8 s <sub>+ 740 ms</sub> | 0.86× / 1.01× / 1.02× |
-| [Complex caustics](#complex-caustics) | 256 / 2048 | 2.0 s <sub>+ < 0.1 s</sub> | 8.2 s <sub>+ 100 ms</sub> | 203.9 s <sub>+ 1.6 s</sub> | 565.9 s <sub>+ 1.1 s</sub> | 0.20× / 1.06× / 0.96× |
-| [Depth of field](#depth-of-field) | 256 / 512 | 711 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ 100 ms</sub> | 15.3 s <sub>+ 1.3 s</sub> | 48.6 s <sub>+ 730 ms</sub> | 0.70× / 1.02× / 1.02× |
-| [Displacement](#displacement) | 256 / 512 | 779 ms <sub>+ < 0.1 s</sub> | 3.8 s <sub>+ 100 ms</sub> | 11.1 s <sub>+ 1.8 s</sub> | 34.2 s <sub>+ 1.2 s</sub> | 0.86× / 1.03× / 1.02× |
-| [Emissive surface lighting](#emissive-surface-lighting) | 256 / 1024 | 779 ms <sub>+ < 0.1 s</sub> | 3.1 s <sub>+ < 0.1 s</sub> | 35.6 s <sub>+ 1.1 s</sub> | 109.1 s <sub>+ 560 ms</sub> | 0.93× / 1.00× / 1.02× |
-| [Camera exposure](#camera-exposure) | 256 / 512 | 687 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ < 0.1 s</sub> | 17.4 s <sub>+ 1.3 s</sub> | 56.4 s <sub>+ 730 ms</sub> | 0.75× / 1.02× / 1.02× |
-| [Glass and caustics](#glass-and-caustics) | 256 / 512 | 951 ms <sub>+ < 0.1 s</sub> | 3.7 s <sub>+ 100 ms</sub> | 17.9 s <sub>+ 1.4 s</sub> | 54.1 s <sub>+ 830 ms</sub> | 0.75× / 1.03× / 1.02× |
-| [Glossy materials](#glossy-materials) | 256 / 512 | 1.1 s <sub>+ 100 ms</sub> | 3.2 s <sub>+ 100 ms</sub> | 9.0 s <sub>+ 1.3 s</sub> | 29.4 s <sub>+ 740 ms</sub> | 0.90× / 1.02× / 1.02× |
-| [Hair](#hair) | 256 / 512 | 722 ms <sub>+ < 0.1 s</sub> | 3.6 s <sub>+ 100 ms</sub> | 15.5 s <sub>+ 1.4 s</sub> | 49.3 s <sub>+ 790 ms</sub> | 0.72× / 1.03× / 1.02× |
-| [Height fog](#height-fog) | 256 / 512 | 687 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ < 0.1 s</sub> | 14.8 s <sub>+ 1.3 s</sub> | 47.5 s <sub>+ 730 ms</sub> | 0.75× / 1.02× / 1.02× |
-| [Holdout](#holdout) | 256 / 512 | 707 ms <sub>+ < 0.1 s</sub> | 3.1 s <sub>+ < 0.1 s</sub> | 17.1 s <sub>+ 1.3 s</sub> | 46.9 s <sub>+ 750 ms</sub> | 0.73× / 1.03× / 1.02× |
-| [IES profile](#ies-profile) | 256 / 512 | 674 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ < 0.1 s</sub> | 19.8 s <sub>+ 1.4 s</sub> | 65.0 s <sub>+ 780 ms</sub> | 0.48× / 0.94× / 1.07× |
-| [Instances, points, curves](#instances-points-curves) | 256 / 512 | 862 ms <sub>+ < 0.1 s</sub> | 3.3 s <sub>+ 100 ms</sub> | 15.0 s <sub>+ 1.3 s</sub> | 48.6 s <sub>+ 730 ms</sub> | 0.73× / 1.03× / 1.02× |
-| [Lens shift](#lens-shift) | 256 / 512 | 611 ms <sub>+ < 0.1 s</sub> | 2.3 s <sub>+ < 0.1 s</sub> | 10.6 s <sub>+ 1.3 s</sub> | 33.6 s <sub>+ 720 ms</sub> | 0.66× / 1.02× / 1.02× |
-| [Light groups](#light-groups) | 256 / 512 | 1.2 s <sub>+ < 0.1 s</sub> | 3.4 s <sub>+ < 0.1 s</sub> | 28.9 s <sub>+ 1.6 s</sub> | 67.6 s <sub>+ 1.0 s</sub> | 0.91× / 1.02× / 1.02× |
-| [Light linking](#light-linking) | 256 / 512 | 760 ms <sub>+ < 0.1 s</sub> | 2.9 s <sub>+ < 0.1 s</sub> | 23.8 s <sub>+ 1.6 s</sub> | 62.4 s <sub>+ 1.0 s</sub> | 0.88× / 1.02× / 1.02× |
-| [Textured area light](#textured-area-light) | 256 / 512 | 1.0 s <sub>+ < 0.1 s</sub> | 3.7 s <sub>+ 100 ms</sub> | 14.8 s <sub>+ 1.5 s</sub> | 60.2 s <sub>+ 820 ms</sub> | 0.78× / 1.03× / 1.03× |
-| [Sheen, thin film, anisotropy](#sheen-thin-film-anisotropy) | 256 / 512 | 824 ms <sub>+ < 0.1 s</sub> | 3.2 s <sub>+ 100 ms</sub> | 15.7 s <sub>+ 1.4 s</sub> | 49.8 s <sub>+ 790 ms</sub> | 0.73× / 1.02× / 1.02× |
-| [Motion blur](#motion-blur) | 256 / 512 | 729 ms <sub>+ < 0.1 s</sub> | 3.0 s <sub>+ 100 ms</sub> | 15.3 s <sub>+ 1.3 s</sub> | 49.5 s <sub>+ 730 ms</sub> | 0.74× / 1.02× / 1.02× |
-| [Orthographic camera](#orthographic-camera) | 256 / 512 | 614 ms <sub>+ < 0.1 s</sub> | 2.5 s <sub>+ < 0.1 s</sub> | 14.2 s <sub>+ 1.3 s</sub> | 45.1 s <sub>+ 740 ms</sub> | 0.59× / 1.03× / 1.01× |
-| [Post-processing](#post-processing) | 256 / 512 | 688 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ < 0.1 s</sub> | 14.8 s <sub>+ 1.3 s</sub> | 47.5 s <sub>+ 730 ms</sub> | 0.75× / 1.02× / 1.02× |
-| [Render region](#render-region) | 256 / 512 | 259 ms <sub>+ < 0.1 s</sub> | 1.3 s <sub>+ < 0.1 s</sub> | 3.8 s <sub>+ 1.3 s</sub> | 13.2 s <sub>+ 740 ms</sub> | 0.66× / 1.01× / 1.01× |
-| [Subdivision surfaces](#subdivision-surfaces) | 256 / 512 | 695 ms <sub>+ < 0.1 s</sub> | 3.0 s <sub>+ 100 ms</sub> | 14.8 s <sub>+ 1.3 s</sub> | 47.9 s <sub>+ 760 ms</sub> | 0.74× / 1.02× / 1.02× |
-| [Subsurface scattering](#subsurface-scattering) | 256 / 512 | 875 ms <sub>+ < 0.1 s</sub> | 3.8 s <sub>+ 100 ms</sub> | 21.9 s <sub>+ 1.4 s</sub> | 55.6 s <sub>+ 790 ms</sub> | 0.69× / 1.03× / 1.02× |
-| [UV sets](#uv-sets) | 256 / 512 | 816 ms <sub>+ < 0.1 s</sub> | 2.6 s <sub>+ < 0.1 s</sub> | 9.9 s <sub>+ 1.3 s</sub> | 32.3 s <sub>+ 780 ms</sub> | 0.93× / 1.07× / 1.02× |
-| [Volumes (OpenVDB)](#volumes-openvdb) | 256 / 512 | 1.1 s <sub>+ < 0.1 s</sub> | 4.2 s <sub>+ < 0.1 s</sub> | 24.6 s <sub>+ 1.3 s</sub> | 58.3 s <sub>+ 760 ms</sub> | 0.72× / 0.98× / 1.02× |
-| [Glowing panel and bulb](#glowing-panel-and-bulb) | 256 / 2048 | 736 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ < 0.1 s</sub> | 7.9 s <sub>+ 1.4 s</sub> | 27.6 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
-| [Bounce light from a glowing panel](#bounce-light-from-a-glowing-panel) | 256 / 2048 | 735 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ 100 ms</sub> | 7.7 s <sub>+ 1.5 s</sub> | 28.0 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
-| [Chrome ball in a glowing room](#chrome-ball-in-a-glowing-room) | 256 / 2048 | 738 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ 100 ms</sub> | 7.8 s <sub>+ 1.4 s</sub> | 27.7 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
-| [Transparent and presence opacity](#transparent-and-presence-opacity) | 256 / 2048 | 1.0 s <sub>+ < 0.1 s</sub> | 3.3 s <sub>+ 100 ms</sub> | 7.9 s <sub>+ 1.5 s</sub> | 29.1 s <sub>+ 1.0 s</sub> | 1.18× / 1.08× / 0.95× |
-| [Material lobes](#material-lobes) | 256 / 256 | 2.2 s <sub>+ 100 ms</sub> | 4.0 s <sub>+ 100 ms</sub> | 2.1 s <sub>+ 2.1 s</sub> | 8.1 s <sub>+ 1.3 s</sub> | 0.96× / 0.98× / 0.98× |
-| [Skin, jade and leaves](#skin-jade-and-leaves) | 256 / 256 | 1.7 s <sub>+ 100 ms</sub> | 6.0 s <sub>+ 100 ms</sub> | 18.4 s <sub>+ 2.1 s</sub> | 29.9 s <sub>+ 1.2 s</sub> | 0.95× / 0.94× / 1.01× |
+| [Global illumination](#global-illumination) | 256 / 512 | 696 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ 100 ms</sub> | 14.7 s <sub>+ 1.4 s</sub> | 47.3 s <sub>+ 720 ms</sub> | 0.75× / 1.02× / 1.02× |
+| [Clearcoat](#clearcoat) | 256 / 512 | 747 ms <sub>+ < 0.1 s</sub> | 3.1 s <sub>+ 100 ms</sub> | 11.3 s <sub>+ 1.3 s</sub> | 36.8 s <sub>+ 740 ms</sub> | 0.86× / 1.01× / 1.02× |
+| [Complex caustics](#complex-caustics) | 256 / 2048 | 2.0 s <sub>+ 100 ms</sub> | 7.9 s <sub>+ 100 ms</sub> | 203.9 s <sub>+ 1.6 s</sub> | 565.9 s <sub>+ 1.1 s</sub> | 0.20× / 1.06× / 0.96× |
+| [Depth of field](#depth-of-field) | 256 / 512 | 692 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ < 0.1 s</sub> | 15.3 s <sub>+ 1.3 s</sub> | 48.6 s <sub>+ 730 ms</sub> | 0.70× / 1.02× / 1.02× |
+| [Displacement](#displacement) | 256 / 512 | 746 ms <sub>+ < 0.1 s</sub> | 3.7 s <sub>+ 100 ms</sub> | 11.1 s <sub>+ 1.8 s</sub> | 34.2 s <sub>+ 1.2 s</sub> | 0.86× / 1.03× / 1.02× |
+| [Emissive surface lighting](#emissive-surface-lighting) | 256 / 1024 | 785 ms <sub>+ < 0.1 s</sub> | 3.1 s <sub>+ 100 ms</sub> | 35.6 s <sub>+ 1.1 s</sub> | 109.1 s <sub>+ 560 ms</sub> | 0.93× / 1.00× / 1.02× |
+| [Camera exposure](#camera-exposure) | 256 / 512 | 684 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ 100 ms</sub> | 17.4 s <sub>+ 1.3 s</sub> | 56.4 s <sub>+ 730 ms</sub> | 0.75× / 1.02× / 1.02× |
+| [Glass and caustics](#glass-and-caustics) | 256 / 512 | 932 ms <sub>+ < 0.1 s</sub> | 3.6 s <sub>+ 100 ms</sub> | 17.9 s <sub>+ 1.4 s</sub> | 54.1 s <sub>+ 830 ms</sub> | 0.75× / 1.03× / 1.02× |
+| [Glossy materials](#glossy-materials) | 256 / 512 | 864 ms <sub>+ 100 ms</sub> | 3.2 s <sub>+ 100 ms</sub> | 9.0 s <sub>+ 1.3 s</sub> | 29.4 s <sub>+ 740 ms</sub> | 0.90× / 1.02× / 1.02× |
+| [Hair](#hair) | 256 / 512 | 750 ms <sub>+ < 0.1 s</sub> | 3.5 s <sub>+ 100 ms</sub> | 15.5 s <sub>+ 1.4 s</sub> | 49.3 s <sub>+ 790 ms</sub> | 0.72× / 1.03× / 1.02× |
+| [Height fog](#height-fog) | 256 / 512 | 670 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ < 0.1 s</sub> | 14.8 s <sub>+ 1.3 s</sub> | 47.5 s <sub>+ 730 ms</sub> | 0.75× / 1.02× / 1.02× |
+| [Holdout](#holdout) | 256 / 512 | 706 ms <sub>+ < 0.1 s</sub> | 3.0 s <sub>+ 100 ms</sub> | 17.1 s <sub>+ 1.3 s</sub> | 46.9 s <sub>+ 750 ms</sub> | 0.73× / 1.03× / 1.02× |
+| [IES profile](#ies-profile) | 256 / 512 | 658 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ 100 ms</sub> | 19.8 s <sub>+ 1.4 s</sub> | 65.0 s <sub>+ 780 ms</sub> | 0.48× / 0.94× / 1.07× |
+| [Instances, points, curves](#instances-points-curves) | 256 / 512 | 770 ms <sub>+ < 0.1 s</sub> | 3.2 s <sub>+ 100 ms</sub> | 15.0 s <sub>+ 1.3 s</sub> | 48.6 s <sub>+ 730 ms</sub> | 0.73× / 1.03× / 1.02× |
+| [Lens shift](#lens-shift) | 256 / 512 | 597 ms <sub>+ < 0.1 s</sub> | 2.4 s <sub>+ < 0.1 s</sub> | 10.6 s <sub>+ 1.3 s</sub> | 33.6 s <sub>+ 720 ms</sub> | 0.66× / 1.02× / 1.02× |
+| [Light groups](#light-groups) | 256 / 512 | 1.1 s <sub>+ < 0.1 s</sub> | 3.3 s <sub>+ 100 ms</sub> | 28.9 s <sub>+ 1.6 s</sub> | 67.6 s <sub>+ 1.0 s</sub> | 0.91× / 1.02× / 1.02× |
+| [Light linking](#light-linking) | 256 / 512 | 736 ms <sub>+ < 0.1 s</sub> | 2.9 s <sub>+ < 0.1 s</sub> | 23.8 s <sub>+ 1.6 s</sub> | 62.4 s <sub>+ 1.0 s</sub> | 0.88× / 1.02× / 1.02× |
+| [Textured area light](#textured-area-light) | 256 / 512 | 932 ms <sub>+ < 0.1 s</sub> | 3.7 s <sub>+ 100 ms</sub> | 14.8 s <sub>+ 1.5 s</sub> | 60.2 s <sub>+ 820 ms</sub> | 0.78× / 1.03× / 1.03× |
+| [Sheen, thin film, anisotropy](#sheen-thin-film-anisotropy) | 256 / 512 | 751 ms <sub>+ < 0.1 s</sub> | 3.1 s <sub>+ 100 ms</sub> | 15.7 s <sub>+ 1.4 s</sub> | 49.8 s <sub>+ 790 ms</sub> | 0.73× / 1.02× / 1.02× |
+| [Motion blur](#motion-blur) | 256 / 512 | 695 ms <sub>+ < 0.1 s</sub> | 3.0 s <sub>+ 100 ms</sub> | 15.3 s <sub>+ 1.3 s</sub> | 49.5 s <sub>+ 730 ms</sub> | 0.74× / 1.02× / 1.02× |
+| [Orthographic camera](#orthographic-camera) | 256 / 512 | 598 ms <sub>+ < 0.1 s</sub> | 2.5 s <sub>+ 100 ms</sub> | 14.2 s <sub>+ 1.3 s</sub> | 45.1 s <sub>+ 740 ms</sub> | 0.59× / 1.03× / 1.01× |
+| [Post-processing](#post-processing) | 256 / 512 | 668 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ < 0.1 s</sub> | 14.8 s <sub>+ 1.3 s</sub> | 47.5 s <sub>+ 730 ms</sub> | 0.75× / 1.02× / 1.02× |
+| [Render region](#render-region) | 256 / 512 | 278 ms <sub>+ < 0.1 s</sub> | 1.3 s <sub>+ 100 ms</sub> | 3.8 s <sub>+ 1.3 s</sub> | 13.2 s <sub>+ 740 ms</sub> | 0.66× / 1.01× / 1.01× |
+| [Subdivision surfaces](#subdivision-surfaces) | 256 / 512 | 665 ms <sub>+ < 0.1 s</sub> | 2.9 s <sub>+ 100 ms</sub> | 14.8 s <sub>+ 1.3 s</sub> | 47.9 s <sub>+ 760 ms</sub> | 0.74× / 1.02× / 1.02× |
+| [Subsurface scattering](#subsurface-scattering) | 256 / 512 | 800 ms <sub>+ < 0.1 s</sub> | 3.7 s <sub>+ 100 ms</sub> | 21.9 s <sub>+ 1.4 s</sub> | 55.6 s <sub>+ 790 ms</sub> | 0.69× / 1.03× / 1.02× |
+| [UV sets](#uv-sets) | 256 / 512 | 853 ms <sub>+ < 0.1 s</sub> | 2.6 s <sub>+ 100 ms</sub> | 9.9 s <sub>+ 1.3 s</sub> | 32.3 s <sub>+ 780 ms</sub> | 0.93× / 1.07× / 1.02× |
+| [Volumes (OpenVDB)](#volumes-openvdb) | 256 / 512 | 1.1 s <sub>+ < 0.1 s</sub> | 4.1 s <sub>+ 100 ms</sub> | 24.6 s <sub>+ 1.3 s</sub> | 58.3 s <sub>+ 760 ms</sub> | 0.72× / 0.98× / 1.02× |
+| [Glowing panel and bulb](#glowing-panel-and-bulb) | 256 / 2048 | 794 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ 100 ms</sub> | 7.9 s <sub>+ 1.4 s</sub> | 27.6 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
+| [Bounce light from a glowing panel](#bounce-light-from-a-glowing-panel) | 256 / 2048 | 729 ms <sub>+ < 0.1 s</sub> | 2.7 s <sub>+ 100 ms</sub> | 7.7 s <sub>+ 1.5 s</sub> | 28.0 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
+| [Chrome ball in a glowing room](#chrome-ball-in-a-glowing-room) | 256 / 2048 | 722 ms <sub>+ < 0.1 s</sub> | 2.8 s <sub>+ 100 ms</sub> | 7.8 s <sub>+ 1.4 s</sub> | 27.7 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
+| [Transparent and presence opacity](#transparent-and-presence-opacity) | 256 / 2048 | 996 ms <sub>+ < 0.1 s</sub> | 3.3 s <sub>+ 100 ms</sub> | 7.9 s <sub>+ 1.5 s</sub> | 29.1 s <sub>+ 1.0 s</sub> | 1.18× / 1.08× / 0.95× |
+| [Material lobes](#material-lobes) | 256 / 256 | 1.4 s <sub>+ 100 ms</sub> | 3.7 s <sub>+ 200 ms</sub> | 2.1 s <sub>+ 2.1 s</sub> | 8.1 s <sub>+ 1.3 s</sub> | 0.96× / 0.98× / 0.98× |
+| [Skin, jade and leaves](#skin-jade-and-leaves) | 256 / 256 | 1.4 s <sub>+ 100 ms</sub> | 5.9 s <sub>+ 100 ms</sub> | 18.4 s <sub>+ 2.1 s</sub> | 29.9 s <sub>+ 1.2 s</sub> | 0.95× / 0.94× / 1.01× |
 | [Caustics](#caustics) | 256 / 256 | 2.0 s <sub>+ < 0.1 s</sub> | 7.5 s <sub>+ 100 ms</sub> | 4.7 s <sub>+ 1.3 s</sub> | 13.9 s <sub>+ 870 ms</sub> | 0.99× / 1.07× / 1.01× |
-| [Reflections](#reflections) | 256 / 256 | 725 ms <sub>+ 100 ms</sub> | 1.4 s <sub>+ 100 ms</sub> | 430 ms <sub>+ 2.0 s</sub> | 4.3 s <sub>+ 1.2 s</sub> | 1.00× / 1.00× / 1.00× |
-| [Curves, points and hair](#curves-points-and-hair) | 256 / 256 | 799 ms <sub>+ < 0.1 s</sub> | 1.6 s <sub>+ 100 ms</sub> | 430 ms <sub>+ 1.3 s</sub> | 1.3 s <sub>+ 920 ms</sub> | 1.02× / 1.02× / 1.00× |
-| [Light shapes](#light-shapes) | 256 / 256 | 1.5 s <sub>+ 100 ms</sub> | 3.1 s <sub>+ < 0.1 s</sub> | 1.9 s <sub>+ 2.2 s</sub> | 6.2 s <sub>+ 1.9 s</sub> | 1.12× / 0.99× / 1.01× |
-| [Many lights](#many-lights) | 256 / 256 | 11.3 s <sub>+ 100 ms</sub> | 24.2 s <sub>+ 100 ms</sub> | 41.1 s <sub>+ 3.7 s</sub> | 108.2 s <sub>+ 3.5 s</sub> | 1.09× / 1.08× / 1.02× |
-| [Volume multiple scattering](#volume-multiple-scattering) | 256 / 256 | 5.4 s <sub>+ 100 ms</sub> | 7.4 s <sub>+ 100 ms</sub> | 67.0 s <sub>+ 1.9 s</sub> | 419.0 s <sub>+ 1.0 s</sub> | 0.62× / 1.02× / 1.00× |
-| [Displacement shaders](#displacement-shaders) | 256 / 256 | 2.1 s <sub>+ < 0.1 s</sub> | 3.2 s <sub>+ 100 ms</sub> | 1.6 s <sub>+ 2.5 s</sub> | 5.1 s <sub>+ 2.2 s</sub> | 1.00× / 0.99× / 0.99× |
-| [MaterialX BSDF graphs](#materialx-bsdf-graphs) | 256 / 256 | 3.1 s <sub>+ < 0.1 s</sub> | 10.1 s <sub>+ 100 ms</sub> | 5.4 s <sub>+ 1.7 s</sub> | 30.3 s <sub>+ 1.2 s</sub> | 0.98× / 1.00× / 0.91× |
-| [MaterialX and Karma nodes](#materialx-and-karma-nodes) | 256 / 256 | 2.0 s <sub>+ < 0.1 s</sub> | 3.0 s <sub>+ 100 ms</sub> | 15.9 s <sub>+ 1.7 s</sub> | 6.8 s <sub>+ 1.3 s</sub> | 1.19× / 1.19× / 1.18× |
-| [Objects without a material](#objects-without-a-material) | 256 / 256 | 2.3 s <sub>+ < 0.1 s</sub> | 4.0 s <sub>+ 100 ms</sub> | 3.7 s <sub>+ 1.4 s</sub> | 5.0 s <sub>+ 900 ms</sub> | 1.01× / 1.02× / 0.99× |
-| [Texture colour spaces and UDIMs](#texture-colour-spaces-and-udims) | 256 / 256 | 843 ms <sub>+ < 0.1 s</sub> | 2.1 s <sub>+ < 0.1 s</sub> | 15.3 s <sub>+ 1.5 s</sub> | 30.5 s <sub>+ 1.2 s</sub> | 0.98× / 1.03× / 0.96× |
-| [Rough glass](#rough-glass) | 256 / 32 | 2.1 s <sub>+ 100 ms</sub> | 8.8 s <sub>+ 100 ms</sub> | 11.8 s <sub>+ 2.1 s</sub> | 11.8 s <sub>+ 1.2 s</sub> | 1.00× / 0.97× / 1.10× |
-| [Glass, translucency and smoke in order](#glass-translucency-and-smoke-in-order) | 256 / 256 | 1.9 s <sub>+ < 0.1 s</sub> | 5.6 s <sub>+ 100 ms</sub> | 19.5 s <sub>+ 1.7 s</sub> | 54.8 s <sub>+ 1.1 s</sub> | 1.05× / 1.04× / 1.03× |
-| [Rough mirror floor](#rough-mirror-floor) | 256 / 256 | 762 ms <sub>+ 100 ms</sub> | 1.8 s <sub>+ < 0.1 s</sub> | 1.1 s <sub>+ 1.5 s</sub> | 4.3 s <sub>+ 1.1 s</sub> | 1.04× / 1.00× / 1.01× |
-| [Screen-space reflections](#screen-space-reflections) | 256 / 256 | 1.7 s <sub>+ 100 ms</sub> | 4.5 s <sub>+ 100 ms</sub> | 5.5 s <sub>+ 1.5 s</sub> | 14.9 s <sub>+ 1.1 s</sub> | 1.04× / 1.01× / 1.01× |
-| [Ambient occlusion](#ambient-occlusion) | 256 / 256 | 882 ms <sub>+ < 0.1 s</sub> | 2.5 s <sub>+ < 0.1 s</sub> | 10.6 s <sub>+ 1.3 s</sub> | 43.5 s <sub>+ 850 ms</sub> | 1.17× / 1.03× / 1.02× |
-| [Shadows](#shadows) | 256 / 256 | 2.3 s <sub>+ < 0.1 s</sub> | 3.6 s <sub>+ 100 ms</sub> | 1.3 s <sub>+ 1.6 s</sub> | 4.9 s <sub>+ 1.1 s</sub> | 1.01× / 1.02× / 0.99× |
-| [Sun from an HDRI](#sun-from-an-hdri) | 256 / 256 | 1.6 s <sub>+ 100 ms</sub> | 3.5 s <sub>+ 100 ms</sub> | 3.8 s <sub>+ 2.0 s</sub> | 18.0 s <sub>+ 1.2 s</sub> | 1.00× / 1.03× / 1.02× |
-| [A second sun's shadows](#a-second-suns-shadows) | 256 / 256 | 4.0 s <sub>+ 100 ms</sub> | 5.6 s <sub>+ 100 ms</sub> | 9.7 s <sub>+ 2.1 s</sub> | 26.5 s <sub>+ 1.2 s</sub> | 0.99× / 0.98× / 1.01× |
-| [Light and shadow linking](#light-and-shadow-linking) | 256 / 256 | 1.0 s <sub>+ < 0.1 s</sub> | 3.1 s <sub>+ < 0.1 s</sub> | 1.8 s <sub>+ 1.6 s</sub> | 4.2 s <sub>+ 1.0 s</sub> | 1.03× / 1.01× / 1.02× |
-| [Colour limit](#colour-limit) | 256 / 2048 | 1.4 s <sub>+ < 0.1 s</sub> | 4.8 s <sub>+ 100 ms</sub> | 29.0 s <sub>+ 1.4 s</sub> | 114.0 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
-| [Velocity motion blur](#velocity-motion-blur) | 256 / 256 | 755 ms <sub>+ 100 ms</sub> | 1.6 s <sub>+ 100 ms</sub> | 820 ms <sub>+ 1.3 s</sub> | 3.7 s <sub>+ 930 ms</sub> | 0.96× / 0.99× / 1.02× |
-| [Motion blur in reflections](#motion-blur-in-reflections) | 256 / 256 | 935 ms <sub>+ 100 ms</sub> | 2.5 s <sub>+ 100 ms</sub> | 3.2 s <sub>+ 1.5 s</sub> | 10.1 s <sub>+ 1.1 s</sub> | 1.05× / 1.01× / 1.01× |
-| [Nested instancing](#nested-instancing) | 256 / 256 | 6.3 s <sub>+ < 0.1 s</sub> | 11.7 s <sub>+ 100 ms</sub> | 3.4 s <sub>+ 1.3 s</sub> | 11.3 s <sub>+ 900 ms</sub> | 0.97× / 1.02× / 0.99× |
-| [Coloured volume shadows](#coloured-volume-shadows) | 256 / 256 | 4.3 s <sub>+ 100 ms</sub> | 6.0 s <sub>+ 100 ms</sub> | 8.9 s <sub>+ 2.1 s</sub> | 20.9 s <sub>+ 1.2 s</sub> | 1.00× / 1.00× / 1.19× |
-| [Volume motion blur](#volume-motion-blur) | 256 / 256 | 10.3 s <sub>+ < 0.1 s</sub> | 15.4 s <sub>+ 100 ms</sub> | 3.9 s <sub>+ 1.7 s</sub> | 9.0 s <sub>+ 1.1 s</sub> | 1.01× / 1.01× / 0.99× |
-| [Cryptomatte](#cryptomatte) | 256 / 256 | 2.9 s <sub>+ < 0.1 s</sub> | 5.3 s <sub>+ < 0.1 s</sub> | 4.1 s <sub>+ 1.6 s</sub> | 17.9 s <sub>+ 1.2 s</sub> | 0.99× / 1.00× / 1.02× |
-| [AOVs and light groups](#aovs-and-light-groups) | 256 / 256 | 2.6 s <sub>+ < 0.1 s</sub> | 6.3 s <sub>+ 100 ms</sub> | 100.7 s <sub>+ 2.1 s</sub> | 18.5 s <sub>+ 1.4 s</sub> | 0.97× / 0.97× / 1.02× |
-| [Tiled rendering](#tiled-rendering) | 256 / 2048 | 5.6 s <sub>+ < 0.1 s</sub> | 17.5 s <sub>+ 100 ms</sub> | 186.0 s <sub>+ 1.8 s</sub> | 846.4 s <sub>+ 1.2 s</sub> | 0.69× / 0.63× / 1.01× |
+| [Reflections](#reflections) | 256 / 256 | 507 ms <sub>+ 100 ms</sub> | 1.4 s <sub>+ 100 ms</sub> | 430 ms <sub>+ 2.0 s</sub> | 4.3 s <sub>+ 1.2 s</sub> | 1.00× / 1.00× / 1.00× |
+| [Curves, points and hair](#curves-points-and-hair) | 256 / 256 | 743 ms <sub>+ < 0.1 s</sub> | 1.5 s <sub>+ 100 ms</sub> | 430 ms <sub>+ 1.3 s</sub> | 1.3 s <sub>+ 920 ms</sub> | 1.02× / 1.02× / 1.00× |
+| [Light shapes](#light-shapes) | 256 / 256 | 1.4 s <sub>+ 100 ms</sub> | 3.0 s <sub>+ 100 ms</sub> | 1.9 s <sub>+ 2.2 s</sub> | 6.2 s <sub>+ 1.9 s</sub> | 1.12× / 0.99× / 1.01× |
+| [Many lights](#many-lights) | 256 / 256 | 9.6 s <sub>+ 100 ms</sub> | 23.3 s <sub>+ 100 ms</sub> | 37.9 s <sub>+ 5.7 s</sub> | 99.0 s <sub>+ 3.0 s</sub> | 1.09× / 1.08× / 1.02× |
+| [Volume multiple scattering](#volume-multiple-scattering) | 256 / 256 | 4.8 s <sub>+ 100 ms</sub> | 7.1 s <sub>+ 100 ms</sub> | 67.0 s <sub>+ 1.9 s</sub> | 419.0 s <sub>+ 1.0 s</sub> | 0.62× / 1.02× / 1.00× |
+| [Displacement shaders](#displacement-shaders) | 256 / 256 | 1.3 s <sub>+ 100 ms</sub> | 3.0 s <sub>+ 100 ms</sub> | 1.6 s <sub>+ 2.5 s</sub> | 5.1 s <sub>+ 2.2 s</sub> | 1.00× / 0.99× / 0.99× |
+| [MaterialX BSDF graphs](#materialx-bsdf-graphs) | 256 / 256 | 2.2 s <sub>+ 100 ms</sub> | 9.4 s <sub>+ 100 ms</sub> | 5.4 s <sub>+ 1.7 s</sub> | 30.3 s <sub>+ 1.2 s</sub> | 0.98× / 1.00× / 0.91× |
+| [MaterialX and Karma nodes](#materialx-and-karma-nodes) | 256 / 256 | 1.6 s <sub>+ 100 ms</sub> | 2.7 s <sub>+ 100 ms</sub> | 15.9 s <sub>+ 1.7 s</sub> | 6.8 s <sub>+ 1.3 s</sub> | 1.19× / 1.19× / 1.18× |
+| [Objects without a material](#objects-without-a-material) | 256 / 256 | 1.7 s <sub>+ < 0.1 s</sub> | 3.8 s <sub>+ 100 ms</sub> | 3.7 s <sub>+ 1.4 s</sub> | 5.0 s <sub>+ 900 ms</sub> | 1.01× / 1.02× / 0.99× |
+| [Texture colour spaces and UDIMs](#texture-colour-spaces-and-udims) | 256 / 256 | 818 ms <sub>+ < 0.1 s</sub> | 2.2 s <sub>+ 100 ms</sub> | 15.3 s <sub>+ 1.5 s</sub> | 30.5 s <sub>+ 1.2 s</sub> | 0.98× / 1.03× / 0.96× |
+| [Rough glass](#rough-glass) | 256 / 32 | 2.0 s <sub>+ 100 ms</sub> | 8.4 s <sub>+ 100 ms</sub> | 11.8 s <sub>+ 2.1 s</sub> | 11.8 s <sub>+ 1.2 s</sub> | 1.00× / 0.97× / 1.10× |
+| [Glass, translucency and smoke in order](#glass-translucency-and-smoke-in-order) | 256 / 256 | 1.9 s <sub>+ < 0.1 s</sub> | 5.3 s <sub>+ 100 ms</sub> | 19.5 s <sub>+ 1.7 s</sub> | 54.8 s <sub>+ 1.1 s</sub> | 1.05× / 1.04× / 1.03× |
+| [Rough mirror floor](#rough-mirror-floor) | 256 / 256 | 515 ms <sub>+ 100 ms</sub> | 1.7 s <sub>+ 100 ms</sub> | 1.1 s <sub>+ 1.5 s</sub> | 4.3 s <sub>+ 1.1 s</sub> | 1.04× / 1.00× / 1.01× |
+| [Screen-space reflections](#screen-space-reflections) | 256 / 256 | 1.3 s <sub>+ 100 ms</sub> | 4.4 s <sub>+ 100 ms</sub> | 5.5 s <sub>+ 1.5 s</sub> | 14.9 s <sub>+ 1.1 s</sub> | 1.04× / 1.01× / 1.01× |
+| [Ambient occlusion](#ambient-occlusion) | 256 / 256 | 836 ms <sub>+ < 0.1 s</sub> | 2.5 s <sub>+ 100 ms</sub> | 10.6 s <sub>+ 1.3 s</sub> | 43.5 s <sub>+ 850 ms</sub> | 1.17× / 1.03× / 1.02× |
+| [Shadows](#shadows) | 256 / 256 | 1.6 s <sub>+ < 0.1 s</sub> | 3.5 s <sub>+ 100 ms</sub> | 1.3 s <sub>+ 1.6 s</sub> | 4.9 s <sub>+ 1.1 s</sub> | 1.01× / 1.02× / 0.99× |
+| [Sun from an HDRI](#sun-from-an-hdri) | 256 / 256 | 1.0 s <sub>+ 100 ms</sub> | 3.4 s <sub>+ 100 ms</sub> | 3.8 s <sub>+ 2.0 s</sub> | 18.0 s <sub>+ 1.2 s</sub> | 1.00× / 1.03× / 1.02× |
+| [A second sun's shadows](#a-second-suns-shadows) | 256 / 256 | 3.6 s <sub>+ 100 ms</sub> | 5.4 s <sub>+ 200 ms</sub> | 9.7 s <sub>+ 2.1 s</sub> | 26.5 s <sub>+ 1.2 s</sub> | 0.99× / 0.98× / 1.01× |
+| [Light and shadow linking](#light-and-shadow-linking) | 256 / 256 | 992 ms <sub>+ < 0.1 s</sub> | 3.0 s <sub>+ 100 ms</sub> | 1.8 s <sub>+ 1.6 s</sub> | 4.2 s <sub>+ 1.0 s</sub> | 1.03× / 1.01× / 1.02× |
+| [Colour limit](#colour-limit) | 256 / 2048 | 1.4 s <sub>+ < 0.1 s</sub> | 4.7 s <sub>+ 100 ms</sub> | 29.0 s <sub>+ 1.4 s</sub> | 114.0 s <sub>+ 1.0 s</sub> | 1.23× / 1.13× / 0.94× |
+| [Velocity motion blur](#velocity-motion-blur) | 256 / 256 | 576 ms <sub>+ 100 ms</sub> | 1.6 s <sub>+ 100 ms</sub> | 1.2 s <sub>+ 1.4 s</sub> | 3.5 s <sub>+ 880 ms</sub> | 0.99× / 1.01× / 1.02× |
+| [Motion blur in reflections](#motion-blur-in-reflections) | 256 / 256 | 886 ms <sub>+ 100 ms</sub> | 2.4 s <sub>+ 100 ms</sub> | 3.2 s <sub>+ 1.5 s</sub> | 10.1 s <sub>+ 1.1 s</sub> | 1.05× / 1.01× / 1.01× |
+| [Nested instancing](#nested-instancing) | 256 / 256 | 2.1 s <sub>+ < 0.1 s</sub> | 10.7 s <sub>+ 100 ms</sub> | 3.4 s <sub>+ 1.3 s</sub> | 11.3 s <sub>+ 900 ms</sub> | 0.97× / 1.02× / 0.99× |
+| [Coloured volume shadows](#coloured-volume-shadows) | 256 / 256 | 3.9 s <sub>+ 100 ms</sub> | 5.7 s <sub>+ 100 ms</sub> | 8.9 s <sub>+ 2.1 s</sub> | 20.9 s <sub>+ 1.2 s</sub> | 1.00× / 1.00× / 1.19× |
+| [Volume motion blur](#volume-motion-blur) | 256 / 256 | 9.5 s <sub>+ 100 ms</sub> | 14.7 s <sub>+ 100 ms</sub> | 3.9 s <sub>+ 1.7 s</sub> | 9.0 s <sub>+ 1.1 s</sub> | 1.01× / 1.01× / 0.99× |
+| [Cryptomatte](#cryptomatte) | 256 / 256 | 2.9 s <sub>+ < 0.1 s</sub> | 5.2 s <sub>+ 100 ms</sub> | 4.1 s <sub>+ 1.6 s</sub> | 17.9 s <sub>+ 1.2 s</sub> | 0.99× / 1.00× / 1.02× |
+| [AOVs and light groups](#aovs-and-light-groups) | 256 / 256 | 2.5 s <sub>+ 100 ms</sub> | 6.0 s <sub>+ 100 ms</sub> | 100.7 s <sub>+ 2.1 s</sub> | 18.5 s <sub>+ 1.4 s</sub> | 0.97× / 0.97× / 1.02× |
+| [Tiled rendering](#tiled-rendering) | 256 / 2048 | 5.1 s <sub>+ < 0.1 s</sub> | 17.2 s <sub>+ 100 ms</sub> | 186.0 s <sub>+ 1.8 s</sub> | 846.4 s <sub>+ 1.2 s</sub> | 0.69× / 0.63× / 1.01× |
 
 ### Methodology
 
@@ -509,42 +509,42 @@ Hardware: AMD Ryzen 9 3950X (16 cores, 32 threads), 48 GB RAM, NVIDIA GeForce GT
 
 The courtyard with the curtains, ivy and cypress add-ons: sun-lit stone, sky through the open roof and light bounced into the arcades (15 million triangles).
 
-![Sponza atrium: sun, sky and bounced light: Eldr raster + SSGI 14.7 s render; Eldr ray traced 44.8 s render; Karma XPU 163.3 s render; Karma CPU 243.8 s render](images/gallery/production/sponza_atrium.jpg)
+![Sponza atrium: sun, sky and bounced light: Eldr raster + SSGI 7.7 s render; Eldr ray traced 43.0 s render; Karma XPU 163.3 s render; Karma CPU 243.8 s render](images/gallery/production/sponza_atrium.jpg)
 
 ### Sponza arcade: GI through curtains
 
 The ground-floor arcade lit mostly by sunlight bounced off the courtyard floor and through the curtains.
 
-![Sponza arcade: GI through curtains: Eldr raster + SSGI 7.3 s render; Eldr ray traced 30.9 s render; Karma XPU 79.3 s render; Karma CPU 219.2 s render](images/gallery/production/sponza_arcade.jpg)
+![Sponza arcade: GI through curtains: Eldr raster + SSGI 5.2 s render; Eldr ray traced 29.7 s render; Karma XPU 79.3 s render; Karma CPU 219.2 s render](images/gallery/production/sponza_arcade.jpg)
 
 ### 10,000 candles: many lights
 
 Sponza at night lit by 10,000 small sphere lights, one per candle flame, and a faint sky; the camera's exposure is -2.5.
 
-![10,000 candles: many lights: Eldr raster + SSGI 22.0 s render; Eldr ray traced 64.3 s render; Karma XPU 542.8 s render; Karma CPU 542.7 s render](images/gallery/production/sponza_candles.jpg)
+![10,000 candles: many lights: Eldr raster + SSGI 18.7 s render; Eldr ray traced 62.0 s render; Karma XPU 542.8 s render; Karma CPU 542.7 s render](images/gallery/production/sponza_candles.jpg)
 
 ### Knight: animated mesh, motion blur
 
 The knight add-on mid-lunge: deforming meshes from point time samples, blurred over a 180 degree shutter.
 
-![Knight: animated mesh, motion blur: Eldr raster + SSGI 6.3 s render; Eldr ray traced 34.6 s render; Karma XPU 104.9 s render; Karma CPU 209.3 s render](images/gallery/production/sponza_knight.jpg)
+![Knight: animated mesh, motion blur: Eldr raster + SSGI 3.5 s render; Eldr ray traced 32.3 s render; Karma XPU 104.9 s render; Karma CPU 209.3 s render](images/gallery/production/sponza_knight.jpg)
 
 ### Flood: water refraction
 
 A FLIP water mesh (1.2 million faces) pouring along the courtyard, in clear water refracting the floor.
 
-![Flood: water refraction: Eldr raster + SSGI 24.2 s render; Eldr ray traced 59.3 s render; Karma XPU 83.8 s render; Karma CPU 277.2 s render](images/gallery/production/sponza_flood.jpg)
+![Flood: water refraction: Eldr raster + SSGI 19.1 s render; Eldr ray traced 52.5 s render; Karma XPU 83.8 s render; Karma CPU 277.2 s render](images/gallery/production/sponza_flood.jpg)
 
 ### Explosion: volumes
 
 Two pyro simulations (OpenVDB density and temperature): dark smoke lit by the sun, fire glowing by temperature.
 
-![Explosion: volumes: Eldr raster + SSGI 12.0 s render; Eldr ray traced 39.8 s render; Karma XPU 80.4 s render; Karma CPU 263.7 s render](images/gallery/production/sponza_explosion.jpg)
+![Explosion: volumes: Eldr raster + SSGI 8.8 s render; Eldr ray traced 36.6 s render; Karma XPU 80.4 s render; Karma CPU 263.7 s render](images/gallery/production/sponza_explosion.jpg)
 
 ### Crowd: 9,324 skinned agents
 
 9,324 UsdSkel agents (20.7 million triangles) skinned on the GPU, at 1280 x 720. Eldr only.
 
-![Crowd: 9,324 skinned agents: Eldr raster + SSGI 13.0 s render; Eldr ray traced 13.1 s render](images/gallery/production/crowd.jpg)
+![Crowd: 9,324 skinned agents: Eldr raster + SSGI 9.0 s render; Eldr ray traced 9.2 s render](images/gallery/production/crowd.jpg)
 
 *Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) and add-ons by the Sponza Add-on Package Crew (Katica Putica, Cristiano Siqueira, Timothy Heath, Justin Prazen, Sebastian Herholz, Bruce Cherniak, Anton Kaplanyan). CC BY 4.0.*
