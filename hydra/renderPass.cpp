@@ -1077,7 +1077,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         mix(&b.renderBuffer, sizeof(b.renderBuffer));
         mix(b.aovName.GetText(), b.aovName.size());
     }
-    if (frameKey == _frameKey && (tiled || delegate->GetRenderSetting<bool>(t2.reuseConvergedFrame, true)) &&
+    // Viewports: only once a frame with nothing changed converged, not the
+    // first frame after a change (a post motion blur frame counts as
+    // converged, and the film follows it).
+    const bool sameKey = frameKey == _frameKey;
+    if (sameKey && (tiled || (_keyHeld && delegate->GetRenderSetting<bool>(t2.reuseConvergedFrame, true))) &&
         IsConverged()) {
         return;
     }
@@ -1488,6 +1492,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         }
     }
+    _keyHeld = sameKey;
     _frameKey = !_failed ? frameKey : 0;
     if (huskLinear && !tiled) {
         try {  // the linear image over the display one Render read

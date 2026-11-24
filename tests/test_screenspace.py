@@ -206,7 +206,9 @@ cam = UsdGeom.Camera.Define(stage, "/cam")
 cam.AddTranslateOp().Set(Gf.Vec3d(1.8, 1.6, 3.2))
 cam.AddRotateXYZOp().Set(Gf.Vec3f(-8, 25, 0))
 cam.CreateFocalLengthAttr(24)
+# 250 frames: the film goes on past its target (eldr:reuseConvergedFrame off) to average SSGI's noise.
 linear = {"eldr:taa": True, "eldr:tonemapper": "none", "eldr:exposureCompensation": -1.0, "eldr:ssr": False,
+          "eldr:reuseConvergedFrame": False,
           "eldr:bloomIntensity": 0.0, "eldr:adaptiveThreshold": 0.0}
 sky = render(stage, {**linear, "eldr:ambientOcclusion": False}, frames=70)
 for bitmask in (False, True):

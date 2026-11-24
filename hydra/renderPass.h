@@ -62,6 +62,7 @@ private:
     bool _extraStale = false;    // unread extra AOVs were left out of the last frame (eldr:lazyExtraAovs)
     bool _failed = false;        // the last frame's Render threw: not converged, no products
     uint64_t _frameKey = 0;      // what the last frame rendered (eldr:reuseConvergedFrame; 0: none)
+    bool _keyHeld = false;       // and it had the frame before's
     std::optional<std::chrono::steady_clock::time_point> _lastMove;  // the camera last moved (eldr:stillDelay)
     bool _holding = false;       // stopped less than eldr:stillDelay ago: counts as moving
     bool _redicing = false;      // eldr:screenDicing: the meshes re-dice for the last frame's view
