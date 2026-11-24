@@ -1053,25 +1053,33 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     const uint32_t tileSize = HdVkTileSize(delegate->GetRenderSetting<int>(t2.tileSize, 0));
     const bool tiled = offline && tileSize > 0 && (frame.width > tileSize || frame.height > tileSize) &&
                        !(frame.lensDistortion && frame.distortion.Active());
-    uint64_t tiledKey = 0;
-    if (tiled) {
-        tiledKey = 1469598103934665603ull;
-        auto mix = [&](const void *data, size_t size) {
-            for (size_t i = 0; i < size; ++i) {
-                tiledKey = (tiledKey ^ static_cast<const unsigned char *>(data)[i]) * 1099511628211ull;
-            }
-        };
-        mix(&frame.sceneVersion, sizeof(frame.sceneVersion));
-        mix(frame.viewProj, sizeof(frame.viewProj));
-        mix(&frame.width, sizeof(frame.width));
-        mix(&frame.height, sizeof(frame.height));
-        mix(&tileSize, sizeof(tileSize));
-        for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
-            mix(&b.renderBuffer, sizeof(b.renderBuffer));
+    // eldr:reuseConvergedFrame (tiled frames always): a converged frame
+    // asked for again with nothing changed keeps its buffers as they are.
+    // Houdini's viewport redraws a still camera for its own reasons (hover,
+    // selection, handles): each was another full frame, 20 to 45 ms GPU.
+    uint64_t frameKey = 1469598103934665603ull;
+    auto mix = [&](const void *data, size_t size) {
+        for (size_t i = 0; i < size; ++i) {
+            frameKey = (frameKey ^ static_cast<const unsigned char *>(data)[i]) * 1099511628211ull;
         }
-        if (tiledKey == _tiledKey && IsConverged()) {
-            return;
-        }
+    };
+    mix(&frame.sceneVersion, sizeof(frame.sceneVersion));
+    mix(frame.viewProj, sizeof(frame.viewProj));
+    mix(frame.sceneTime, sizeof(frame.sceneTime));
+    mix(&frame.width, sizeof(frame.width));
+    mix(&frame.height, sizeof(frame.height));
+    mix(&tileSize, sizeof(tileSize));
+    mix(&tagMask, sizeof(tagMask));
+    mix(&clearDepth, sizeof(clearDepth));
+    const uint64_t settingsSyncs = HdVkRenderSettings::syncs;  // the settings prim's karma: values aren't in sceneVersion
+    mix(&settingsSyncs, sizeof(settingsSyncs));
+    for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
+        mix(&b.renderBuffer, sizeof(b.renderBuffer));
+        mix(b.aovName.GetText(), b.aovName.size());
+    }
+    if (frameKey == _frameKey && (tiled || delegate->GetRenderSetting<bool>(t2.reuseConvergedFrame, true)) &&
+        IsConverged()) {
+        return;
     }
 
     // The four come back with the frame if the app read them last frame
@@ -1480,7 +1488,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         }
     }
-    _tiledKey = tiled && !_failed ? tiledKey : 0;
+    _frameKey = !_failed ? frameKey : 0;
     if (huskLinear && !tiled) {
         try {  // the linear image over the display one Render read
             vkr::Renderer::Targets linear;
