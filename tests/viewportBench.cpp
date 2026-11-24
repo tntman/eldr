@@ -401,6 +401,26 @@ int main(int argc, char **argv)
                                                        first, last));
             expect(groundError(view, projection) < 0.01,
                    TfStringPrintf("converged film: depth error %.2g", groundError(view, projection)));
+            // eldr:reuseConvergedFrame: a redraw with nothing changed keeps
+            // the converged frame (a mark in it stays); a setting renders anew.
+            auto marked = [&](bool set) {
+                auto *c = static_cast<GfHalf *>(color->Map());
+                const bool was = float(c[0]) == 1234.0f;
+                if (set) {
+                    c[0] = GfHalf(1234.0f);
+                }
+                color->Unmap();
+                return was;
+            };
+            render(view);  // the unread extra AOVs' frame (eldr:lazyExtraAovs)
+            marked(true);
+            render(view);
+            render(view);
+            expect(marked(false), "converged: a redraw with nothing changed keeps the frame");
+            delegate->SetRenderSetting(TfToken("eldr:exposureCompensation"), VtValue(0.5f));
+            render(view);
+            expect(!marked(false), "converged: a changed setting renders anew");
+            delegate->SetRenderSetting(TfToken("eldr:exposureCompensation"), VtValue(0.0f));
             // Houdini's free camera is a scene prim (/__HoudiniFreeCamera__,
             // its FreeCamera.usda: shutter -0.25 to 0.25) it sends again,
             // unchanged, on each redraw: a dirty camera.

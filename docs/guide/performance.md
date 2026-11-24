@@ -72,6 +72,19 @@ Hair and fur (BasisCurves) render as 6-sided tubes with hair shading; **Curves a
 
 ![Houdini: render stats panel showing Eldr's GPU memory and time donuts](../images/houdini/render_stats_panel.png)
 
+## Viewport speed
+
+Tumbling in Houdini's Solaris viewport at 1866x737 (`viewportBench --houdini`, with 6 ms standing in for Houdini's own work; GTX 1080 Ti):
+
+| Scene | Frame | Where the time goes |
+|---|---|---|
+| macbeth | 8.6 ms | Houdini 6 ms, its copy of the image 1.7 ms, Eldr 0.65 ms; Eldr's GPU work (3.7 ms) runs meanwhile |
+| SSR showcase | 8.4 ms | the same; 9.2 ms at 1920x1080 |
+| Kitchen | 9.9 ms | the GPU: 10.4 ms, half of it shading |
+| crowd_9k | 24.9 ms | the GPU: 24 ms, shading, culling and the sun's shadow cascades |
+
+A light scene leaves Eldr about a millisecond of the frame; a heavy one is the GPU's frame. To tumble a heavy scene faster, lower **Frame Budget while Moving** or **Render Scale while Moving**: it renders smaller while the camera moves. Once a still view has converged, Houdini's redraws (selecting, hovering, handles) reuse the frame instead of rendering another (**Reuse the Converged Frame**).
+
 ## Start-up time
 
 The first render with a new combination of features compiles GPU programs (pipelines): seconds, sometimes tens of seconds on a cold start. Eldr keeps them in a cache file (**Pipeline Cache on Disk**, in `%LOCALAPPDATA%\Eldr`), so the next start takes about 2 s. The file is keyed by Eldr's shaders: a build with new shaders starts a fresh cache, other builds keep it.

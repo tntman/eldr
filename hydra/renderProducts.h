@@ -5,6 +5,7 @@
 #include "pxr/pxr.h"
 #include "pxr/imaging/hd/renderSettings.h"
 
+#include <atomic>
 #include <functional>
 #include <string>
 #include <vector>
@@ -17,10 +18,12 @@ class HdVkRenderSettings final : public HdRenderSettings
 {
 public:
     explicit HdVkRenderSettings(SdfPath const &id) : HdRenderSettings(id) {}
+    // Syncs of any settings prim (the render pass's eldr:reuseConvergedFrame).
+    static inline std::atomic<uint64_t> syncs{0};
 
 protected:
-    // Nothing of its own (the base's isn't exported).
-    void _Sync(HdSceneDelegate *, HdRenderParam *, const HdDirtyBits *) override {}
+    // Nothing else of its own (the base's isn't exported).
+    void _Sync(HdSceneDelegate *, HdRenderParam *, const HdDirtyBits *) override { ++syncs; }
 };
 
 // UsdRender products of the active render settings (usdrecord
