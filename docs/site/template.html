@@ -152,6 +152,17 @@ dl.meta dt { color: var(--muted); } dl.meta dd { margin: 0; overflow-wrap: anywh
 #top { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px)); z-index: 5; font: inherit; font-size: 13px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
 #top:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 860px) { #top { bottom: max(64px, env(safe-area-inset-bottom, 0px)); } }
+/* Pictures open larger on a click: fitted to the window, a second click shows them at full size. */
+#content img { cursor: zoom-in; }
+#zoom { padding: 0; border: 0; background: transparent; max-width: 100vw; max-height: 100vh; width: 100vw; height: 100vh; }
+#zoom::backdrop { background: rgb(0 0 0 / 0.85); }
+#zoom .pane { width: 100%; height: 100%; overflow: auto; display: grid; place-items: center; box-sizing: border-box; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+#zoom img { max-width: 100%; max-height: calc(100vh - 72px); cursor: zoom-in; border-radius: 4px; background: #fff; }
+#zoom.full .pane { place-items: start; }
+#zoom.full .pane > div { width: 100%; }
+#zoom.full img { max-width: none; max-height: none; min-width: 100%; cursor: zoom-out; }
+#zoom p { margin: 8px auto 0; color: #ddd; font-size: 13px; text-align: center; max-width: 90ch; }
+#zoom .close { position: fixed; top: max(12px, env(safe-area-inset-top, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); font: inherit; font-size: 13px; color: #fff; background: rgb(0 0 0 / 0.6); border: 1px solid rgb(255 255 255 / 0.4); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
 </style>
 
 <div class="layout">
@@ -168,6 +179,7 @@ dl.meta dt { color: var(--muted); } dl.meta dd { margin: 0; overflow-wrap: anywh
 </div>
 <button id="top" type="button" class="hidden">Back to top</button>
 <button id="menu" type="button" aria-controls="nav" aria-expanded="false">Contents</button>
+<dialog id="zoom" aria-label="Picture"><div class="pane"><div><img alt=""><p></p></div></div><button class="close" type="button">Close</button></dialog>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script id="docs" type="application/json">/*DOCS*/[]</script>
@@ -380,4 +392,14 @@ toc.addEventListener("click", e => { if (e.target.tagName === "A" && q.value) { 
 const nav = document.getElementById("nav"), menu = document.getElementById("menu");
 menu.addEventListener("click", () => { const o = nav.classList.toggle("open"); menu.setAttribute("aria-expanded", o); });
 toc.addEventListener("click", e => { if (e.target.tagName === "A") { nav.classList.remove("open"); menu.setAttribute("aria-expanded", "false"); } });
+
+// A click on a picture opens it fitted to the window; clicking it again shows it at full size (scroll to pan).
+const zoom = document.getElementById("zoom"), zimg = zoom.querySelector("img"), zcap = zoom.querySelector("p");
+content.addEventListener("click", e => {
+  if (e.target.tagName !== "IMG" || e.target.closest("a")) return;
+  zimg.src = e.target.currentSrc || e.target.src; zimg.alt = e.target.alt; zcap.textContent = e.target.alt;
+  zoom.classList.remove("full"); zoom.showModal();
+});
+zimg.addEventListener("click", e => { e.stopPropagation(); zoom.classList.toggle("full"); });
+zoom.addEventListener("click", () => zoom.close());  // outside the picture, or the Close button
 </script>
