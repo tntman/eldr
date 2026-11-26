@@ -58,7 +58,9 @@ def render(look_through, host=None, recreate=False):
     host = {"houdini:viewport": True} if host is None else host
 
     def make():
-        engine = UsdImagingGL.Engine()
+        params = UsdImagingGL.Engine.Parameters()  # Eldr first: a bare Engine() starts Houdini GL, which needs a graphical licence
+        params.rendererPluginId = "HdVkRendererPlugin"
+        engine = UsdImagingGL.Engine(params)
         assert engine.SetRendererPlugin("HdVkRendererPlugin"), "Eldr not available"
         for k, v in host.items():
             engine.SetRendererSetting(k, v)

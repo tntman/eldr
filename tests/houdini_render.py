@@ -25,7 +25,9 @@ stage = Usd.Stage.Open(scene)
 camera = UsdGeom.Camera(stage.GetPrimAtPath(cameraPath)).GetCamera(Usd.TimeCode.Default())
 CameraUtil.ConformWindow(camera, CameraUtil.Fit, 1.0)
 frustum = camera.frustum
-engine = UsdImagingGL.Engine()
+params = UsdImagingGL.Engine.Parameters()  # Eldr first: a bare Engine() starts Houdini GL, which needs a graphical licence
+params.rendererPluginId = "HdVkRendererPlugin"
+engine = UsdImagingGL.Engine(params)
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "Eldr not available"
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())

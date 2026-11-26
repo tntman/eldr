@@ -31,7 +31,9 @@ UsdLux.DistantLight.Define(stage, "/sun")
 camera = UsdGeom.Camera.Define(stage, "/cam")
 camera.AddTranslateOp().Set(Gf.Vec3d(0, 0, 10))
 frustum = camera.GetCamera(Usd.TimeCode.Default()).frustum
-engine = UsdImagingGL.Engine()
+params = UsdImagingGL.Engine.Parameters()  # Eldr first: a bare Engine() starts Houdini GL, which needs a graphical licence
+params.rendererPluginId = "HdVkRendererPlugin"
+engine = UsdImagingGL.Engine(params)
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "Eldr not available (PXR_PLUGINPATH_NAME?)"
 engine.SetRenderViewport(Gf.Vec4d(0, 0, 64, 64))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())

@@ -65,7 +65,9 @@ fbo.bind()
 frustum = Gf.Frustum()
 frustum.SetPerspective(40, W / H, 0.1, 100)
 frustum.SetPosition(Gf.Vec3d(0, 0.3, 6))
-engine = UsdImagingGL.Engine()
+params = UsdImagingGL.Engine.Parameters()  # Eldr first: a bare Engine() starts Houdini GL, which needs a graphical licence
+params.rendererPluginId = "HdVkRendererPlugin"
+engine = UsdImagingGL.Engine(params)
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "Eldr not available"
 engine.SetRenderViewport(Gf.Vec4d(0, 0, W, H))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
